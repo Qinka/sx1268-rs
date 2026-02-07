@@ -31,6 +31,17 @@ mod tests {
         ]
     }
 
+    /// Helper: compute the 4-byte SPI frequency register params for a given frequency in Hz.
+    fn freq_reg_params(frequency_hz: u32) -> [u8; 4] {
+        let freq_reg = ((frequency_hz as u64 * (1u64 << 25)) / 32_000_000) as u32;
+        [
+            ((freq_reg >> 24) & 0xFF) as u8,
+            ((freq_reg >> 16) & 0xFF) as u8,
+            ((freq_reg >> 8) & 0xFF) as u8,
+            (freq_reg & 0xFF) as u8,
+        ]
+    }
+
     #[test]
     fn test_set_standby_rc() {
         let expectations = write_cmd_expectations(0x80, &[0x00]);
@@ -126,13 +137,7 @@ mod tests {
     fn test_set_rf_frequency() {
         // 868 MHz: freq_reg = 868_000_000 * 2^25 / 32_000_000
         let freq_hz: u32 = 868_000_000;
-        let freq_reg = ((freq_hz as u64 * (1u64 << 25)) / 32_000_000) as u32;
-        let expected_params = [
-            ((freq_reg >> 24) & 0xFF) as u8,
-            ((freq_reg >> 16) & 0xFF) as u8,
-            ((freq_reg >> 8) & 0xFF) as u8,
-            (freq_reg & 0xFF) as u8,
-        ];
+        let expected_params = freq_reg_params(freq_hz);
         let expectations = write_cmd_expectations(0x86, &expected_params);
         let spi = SpiMock::new(&expectations);
         let mut radio = Sx1268::new(spi);
@@ -533,60 +538,61 @@ mod tests {
         assert_eq!(config.lora_sync_word, 0x3444);
         assert!(config.dio2_as_rf_switch);
         assert_eq!(config.fallback_mode, FallbackMode::StbyRc);
+        assert!(config.tcxo.is_none());
+        assert_eq!(config.calibration.0, 0x7F);
     }
 
     #[test]
     fn test_apply_config_default() {
         let config = Sx1268Config::default();
+        let freq_params = freq_reg_params(868_000_000);
         let mut expectations = Vec::new();
 
         // 1. set_standby(StbyRc)
         expectations.extend(write_cmd_expectations(0x80, &[0x00]));
 
-        // 2. set_regulator_mode(DcDcLdo)
+        // 2. (no TCXO — skipped)
+
+        // 3. calibrate(ALL = 0x7F)
+        expectations.extend(write_cmd_expectations(0x89, &[0x7F]));
+
+        // 4. set_regulator_mode(DcDcLdo)
         expectations.extend(write_cmd_expectations(0x96, &[0x01]));
 
-        // 3. set_packet_type(LoRa)
+        // 5. set_dio2_as_rf_switch_ctrl(true)
+        expectations.extend(write_cmd_expectations(0x9D, &[0x01]));
+
+        // 6. set_packet_type(LoRa)
         expectations.extend(write_cmd_expectations(0x8A, &[0x01]));
 
-        // 4. set_rf_frequency(868_000_000)
-        let freq_reg = ((868_000_000u64 * (1u64 << 25)) / 32_000_000) as u32;
-        let freq_params = [
-            ((freq_reg >> 24) & 0xFF) as u8,
-            ((freq_reg >> 16) & 0xFF) as u8,
-            ((freq_reg >> 8) & 0xFF) as u8,
-            (freq_reg & 0xFF) as u8,
-        ];
+        // 7. set_rf_frequency(868_000_000)
         expectations.extend(write_cmd_expectations(0x86, &freq_params));
 
-        // 5. set_pa_config(default)
+        // 8. set_pa_config(default)
         expectations.extend(write_cmd_expectations(0x95, &[0x04, 0x07, 0x00, 0x01]));
 
-        // 6. set_tx_params(22, Ramp200Us)
+        // 9. set_tx_params(22, Ramp200Us)
         expectations.extend(write_cmd_expectations(0x8E, &[22u8, 0x04]));
 
-        // 7. set_buffer_base_address(0x00, 0x00)
+        // 10. set_buffer_base_address(0x00, 0x00)
         expectations.extend(write_cmd_expectations(0x8F, &[0x00, 0x00]));
 
-        // 8. set_lora_modulation_params(SF7, BW125, CR4_5, LDRO=false)
+        // 11. set_lora_modulation_params(SF7, BW125, CR4_5, LDRO=false)
         expectations.extend(write_cmd_expectations(0x8B, &[0x07, 0x04, 0x01, 0x00]));
 
-        // 9. set_lora_packet_params(preamble=8, explicit, len=255, crc=on, iq=normal)
+        // 12. set_lora_packet_params(preamble=8, explicit, len=255, crc=on, iq=normal)
         expectations.extend(write_cmd_expectations(
             0x8C,
             &[0x00, 0x08, 0x00, 0xFF, 0x01, 0x00],
         ));
 
-        // 10. set_lora_sync_word(0x3444) — uses write_register at 0x0740
+        // 13. set_lora_sync_word(0x3444) — uses write_register at 0x0740
         expectations.push(SpiTransaction::transaction_start());
         expectations.push(SpiTransaction::write_vec(vec![0x0D, 0x07, 0x40]));
         expectations.push(SpiTransaction::write_vec(vec![0x34, 0x44]));
         expectations.push(SpiTransaction::transaction_end());
 
-        // 11. set_dio2_as_rf_switch_ctrl(true)
-        expectations.extend(write_cmd_expectations(0x9D, &[0x01]));
-
-        // 12. set_rx_tx_fallback_mode(StbyRc)
+        // 14. set_rx_tx_fallback_mode(StbyRc)
         expectations.extend(write_cmd_expectations(0x93, &[0x20]));
 
         let spi = SpiMock::new(&expectations);
@@ -627,57 +633,124 @@ mod tests {
             rx_base_address: 0x00,
             dio2_as_rf_switch: false,
             fallback_mode: FallbackMode::Fs,
+            tcxo: None,
+            calibration: CalibrationParams::ALL,
         };
+        let freq_params = freq_reg_params(915_000_000);
         let mut expectations = Vec::new();
 
         // 1. set_standby(StbyRc)
         expectations.extend(write_cmd_expectations(0x80, &[0x00]));
 
-        // 2. set_regulator_mode(Ldo)
+        // 2. (no TCXO — skipped)
+
+        // 3. calibrate(ALL)
+        expectations.extend(write_cmd_expectations(0x89, &[0x7F]));
+
+        // 4. set_regulator_mode(Ldo)
         expectations.extend(write_cmd_expectations(0x96, &[0x00]));
 
-        // 3. set_packet_type(LoRa)
+        // 5. set_dio2_as_rf_switch_ctrl(false)
+        expectations.extend(write_cmd_expectations(0x9D, &[0x00]));
+
+        // 6. set_packet_type(LoRa)
         expectations.extend(write_cmd_expectations(0x8A, &[0x01]));
 
-        // 4. set_rf_frequency(915_000_000)
-        let freq_reg = ((915_000_000u64 * (1u64 << 25)) / 32_000_000) as u32;
-        let freq_params = [
-            ((freq_reg >> 24) & 0xFF) as u8,
-            ((freq_reg >> 16) & 0xFF) as u8,
-            ((freq_reg >> 8) & 0xFF) as u8,
-            (freq_reg & 0xFF) as u8,
-        ];
+        // 7. set_rf_frequency(915_000_000)
         expectations.extend(write_cmd_expectations(0x86, &freq_params));
 
-        // 5. set_pa_config(custom)
+        // 8. set_pa_config(custom)
         expectations.extend(write_cmd_expectations(0x95, &[0x02, 0x03, 0x00, 0x01]));
 
-        // 6. set_tx_params(14, Ramp80Us)
+        // 9. set_tx_params(14, Ramp80Us)
         expectations.extend(write_cmd_expectations(0x8E, &[14u8, 0x03]));
 
-        // 7. set_buffer_base_address(0x80, 0x00)
+        // 10. set_buffer_base_address(0x80, 0x00)
         expectations.extend(write_cmd_expectations(0x8F, &[0x80, 0x00]));
 
-        // 8. set_lora_modulation_params(SF12, BW500, CR4_8, LDRO=true)
+        // 11. set_lora_modulation_params(SF12, BW500, CR4_8, LDRO=true)
         expectations.extend(write_cmd_expectations(0x8B, &[0x0C, 0x06, 0x04, 0x01]));
 
-        // 9. set_lora_packet_params(preamble=12, implicit, len=32, crc=off, iq=inverted)
+        // 12. set_lora_packet_params(preamble=12, implicit, len=32, crc=off, iq=inverted)
         expectations.extend(write_cmd_expectations(
             0x8C,
             &[0x00, 0x0C, 0x01, 0x20, 0x00, 0x01],
         ));
 
-        // 10. set_lora_sync_word(0x1424) — write_register at 0x0740
+        // 13. set_lora_sync_word(0x1424) — write_register at 0x0740
         expectations.push(SpiTransaction::transaction_start());
         expectations.push(SpiTransaction::write_vec(vec![0x0D, 0x07, 0x40]));
         expectations.push(SpiTransaction::write_vec(vec![0x14, 0x24]));
         expectations.push(SpiTransaction::transaction_end());
 
-        // 11. set_dio2_as_rf_switch_ctrl(false)
-        expectations.extend(write_cmd_expectations(0x9D, &[0x00]));
-
-        // 12. set_rx_tx_fallback_mode(Fs)
+        // 14. set_rx_tx_fallback_mode(Fs)
         expectations.extend(write_cmd_expectations(0x93, &[0x40]));
+
+        let spi = SpiMock::new(&expectations);
+        let mut radio = Sx1268::new(spi);
+        radio.apply_config(&config).unwrap();
+        radio.release().done();
+    }
+
+    #[test]
+    fn test_apply_config_with_tcxo() {
+        let config = Sx1268Config {
+            tcxo: Some(TcxoConfig {
+                voltage: TcxoVoltage::Ctrl1v8,
+                timeout: 0x000140,
+            }),
+            ..Sx1268Config::default()
+        };
+        let freq_params = freq_reg_params(868_000_000);
+        let mut expectations = Vec::new();
+
+        // 1. set_standby(StbyRc)
+        expectations.extend(write_cmd_expectations(0x80, &[0x00]));
+
+        // 2. set_dio3_as_tcxo_ctrl(Ctrl1v8=0x02, timeout=0x000140)
+        expectations.extend(write_cmd_expectations(0x97, &[0x02, 0x00, 0x01, 0x40]));
+
+        // 3. calibrate(ALL = 0x7F)
+        expectations.extend(write_cmd_expectations(0x89, &[0x7F]));
+
+        // 4. set_regulator_mode(DcDcLdo)
+        expectations.extend(write_cmd_expectations(0x96, &[0x01]));
+
+        // 5. set_dio2_as_rf_switch_ctrl(true)
+        expectations.extend(write_cmd_expectations(0x9D, &[0x01]));
+
+        // 6. set_packet_type(LoRa)
+        expectations.extend(write_cmd_expectations(0x8A, &[0x01]));
+
+        // 7. set_rf_frequency(868 MHz)
+        expectations.extend(write_cmd_expectations(0x86, &freq_params));
+
+        // 8. set_pa_config(default)
+        expectations.extend(write_cmd_expectations(0x95, &[0x04, 0x07, 0x00, 0x01]));
+
+        // 9. set_tx_params(22, Ramp200Us)
+        expectations.extend(write_cmd_expectations(0x8E, &[22u8, 0x04]));
+
+        // 10. set_buffer_base_address(0x00, 0x00)
+        expectations.extend(write_cmd_expectations(0x8F, &[0x00, 0x00]));
+
+        // 11. set_lora_modulation_params
+        expectations.extend(write_cmd_expectations(0x8B, &[0x07, 0x04, 0x01, 0x00]));
+
+        // 12. set_lora_packet_params
+        expectations.extend(write_cmd_expectations(
+            0x8C,
+            &[0x00, 0x08, 0x00, 0xFF, 0x01, 0x00],
+        ));
+
+        // 13. set_lora_sync_word(0x3444)
+        expectations.push(SpiTransaction::transaction_start());
+        expectations.push(SpiTransaction::write_vec(vec![0x0D, 0x07, 0x40]));
+        expectations.push(SpiTransaction::write_vec(vec![0x34, 0x44]));
+        expectations.push(SpiTransaction::transaction_end());
+
+        // 14. set_rx_tx_fallback_mode(StbyRc)
+        expectations.extend(write_cmd_expectations(0x93, &[0x20]));
 
         let spi = SpiMock::new(&expectations);
         let mut radio = Sx1268::new(spi);
