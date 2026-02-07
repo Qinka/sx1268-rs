@@ -644,21 +644,28 @@ where
     /// provided [`Sx1268Config`] in the correct order:
     ///
     /// 1. Set standby (RC)
-    /// 2. Set regulator mode
-    /// 3. Set packet type
-    /// 4. Set RF frequency
-    /// 5. Set PA config
-    /// 6. Set TX params (power + ramp)
-    /// 7. Set buffer base address
-    /// 8. Set LoRa modulation params
-    /// 9. Set LoRa packet params
-    /// 10. Set LoRa sync word
-    /// 11. Set DIO2 as RF switch
-    /// 12. Set fallback mode
+    /// 2. Configure TCXO on DIO3 (if set)
+    /// 3. Run calibration
+    /// 4. Set regulator mode
+    /// 5. Set DIO2 as RF switch
+    /// 6. Set packet type
+    /// 7. Set RF frequency
+    /// 8. Set PA config
+    /// 9. Set TX params (power + ramp)
+    /// 10. Set buffer base address
+    /// 11. Set LoRa modulation params
+    /// 12. Set LoRa packet params
+    /// 13. Set LoRa sync word
+    /// 14. Set fallback mode
     pub fn apply_config(&mut self, config: &Sx1268Config) -> Result<(), Error<SPI::Error>> {
         defmt::info!("ApplyConfig config={}", config);
         self.set_standby(StandbyConfig::StbyRc)?;
+        if let Some(tcxo) = config.tcxo {
+            self.set_dio3_as_tcxo_ctrl(tcxo.voltage, tcxo.timeout)?;
+        }
+        self.calibrate(config.calibration)?;
         self.set_regulator_mode(config.regulator_mode)?;
+        self.set_dio2_as_rf_switch_ctrl(config.dio2_as_rf_switch)?;
         self.set_packet_type(config.packet_type)?;
         self.set_rf_frequency(config.frequency_hz)?;
         self.set_pa_config(config.pa_config)?;
@@ -667,7 +674,6 @@ where
         self.set_lora_modulation_params(config.lora_modulation)?;
         self.set_lora_packet_params(config.lora_packet)?;
         self.set_lora_sync_word(config.lora_sync_word)?;
-        self.set_dio2_as_rf_switch_ctrl(config.dio2_as_rf_switch)?;
         self.set_rx_tx_fallback_mode(config.fallback_mode)?;
         Ok(())
     }

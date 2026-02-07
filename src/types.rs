@@ -324,6 +324,15 @@ pub struct LoRaPacketStatus {
     pub signal_rssi_pkt: i16,
 }
 
+/// Optional TCXO configuration for DIO3.
+#[derive(Clone, Copy, Debug, defmt::Format)]
+pub struct TcxoConfig {
+    /// TCXO supply voltage.
+    pub voltage: TcxoVoltage,
+    /// Timeout in units of 15.625 µs for the TCXO to stabilize.
+    pub timeout: u32,
+}
+
 /// Aggregated configuration for the SX1268 peripheral.
 ///
 /// This struct holds all the common configuration parameters needed to set up
@@ -359,6 +368,10 @@ pub struct Sx1268Config {
     pub dio2_as_rf_switch: bool,
     /// Fallback mode after TX/RX.
     pub fallback_mode: FallbackMode,
+    /// Optional TCXO configuration on DIO3.
+    pub tcxo: Option<TcxoConfig>,
+    /// Calibration parameters to run during configuration.
+    pub calibration: CalibrationParams,
 }
 
 impl Default for Sx1268Config {
@@ -388,6 +401,8 @@ impl Default for Sx1268Config {
             rx_base_address: 0x00,
             dio2_as_rf_switch: true,
             fallback_mode: FallbackMode::StbyRc,
+            tcxo: None,
+            calibration: CalibrationParams::ALL,
         }
     }
 }
