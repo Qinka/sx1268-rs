@@ -15,8 +15,9 @@
 //!
 //! fn example<SPI: embedded_hal::spi::SpiDevice>(spi: SPI) {
 //!     let mut radio = Sx1268::new(spi);
-//!     // Put the radio in standby mode
-//!     radio.set_standby(StandbyConfig::StbyRc).ok();
+//!     // Apply a full configuration in one call
+//!     let config = Sx1268Config::default();
+//!     radio.apply_config(&config).ok();
 //! }
 //! ```
 

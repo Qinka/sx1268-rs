@@ -323,3 +323,71 @@ pub struct LoRaPacketStatus {
     /// RSSI of the LoRa signal (dBm).
     pub signal_rssi_pkt: i16,
 }
+
+/// Aggregated configuration for the SX1268 peripheral.
+///
+/// This struct holds all the common configuration parameters needed to set up
+/// the SX1268 for LoRa operation. Use [`Default`] for sensible defaults
+/// (LoRa, 868 MHz, +22 dBm, SF7/BW125/CR4_5) and then customize as needed.
+///
+/// Apply with [`Sx1268::apply_config`](crate::Sx1268::apply_config).
+#[derive(Clone, Copy, Debug, defmt::Format)]
+pub struct Sx1268Config {
+    /// Packet type (GFSK or LoRa).
+    pub packet_type: PacketType,
+    /// RF frequency in Hz.
+    pub frequency_hz: u32,
+    /// PA configuration.
+    pub pa_config: PaConfig,
+    /// TX output power in dBm (−9 to +22 for SX1268).
+    pub tx_power: i8,
+    /// PA ramp time.
+    pub ramp_time: RampTime,
+    /// LoRa modulation parameters.
+    pub lora_modulation: LoRaModulationParams,
+    /// LoRa packet parameters.
+    pub lora_packet: LoRaPacketParams,
+    /// Regulator mode.
+    pub regulator_mode: RegulatorMode,
+    /// LoRa sync word (0x3444 = public, 0x1424 = private).
+    pub lora_sync_word: u16,
+    /// TX buffer base address.
+    pub tx_base_address: u8,
+    /// RX buffer base address.
+    pub rx_base_address: u8,
+    /// Enable DIO2 as RF switch control.
+    pub dio2_as_rf_switch: bool,
+    /// Fallback mode after TX/RX.
+    pub fallback_mode: FallbackMode,
+}
+
+impl Default for Sx1268Config {
+    fn default() -> Self {
+        Sx1268Config {
+            packet_type: PacketType::LoRa,
+            frequency_hz: 868_000_000,
+            pa_config: PaConfig::default(),
+            tx_power: 22,
+            ramp_time: RampTime::Ramp200Us,
+            lora_modulation: LoRaModulationParams {
+                sf: LoRaSpreadingFactor::Sf7,
+                bw: LoRaBandwidth::Bw125,
+                cr: LoRaCodingRate::Cr4_5,
+                low_data_rate_optimize: false,
+            },
+            lora_packet: LoRaPacketParams {
+                preamble_length: 8,
+                header_type: LoRaHeaderType::Explicit,
+                payload_length: 255,
+                crc_on: true,
+                invert_iq: false,
+            },
+            regulator_mode: RegulatorMode::DcDcLdo,
+            lora_sync_word: 0x3444,
+            tx_base_address: 0x00,
+            rx_base_address: 0x00,
+            dio2_as_rf_switch: true,
+            fallback_mode: FallbackMode::StbyRc,
+        }
+    }
+}
