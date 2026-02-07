@@ -248,6 +248,7 @@ pub enum ChipMode {
     Fs = 0x04,
     Rx = 0x05,
     Tx = 0x06,
+    /// Unknown or reserved chip mode value.
     Unknown,
 }
 
@@ -272,6 +273,7 @@ pub enum CommandStatus {
     CommandProcessingError = 0x04,
     FailureToExecute = 0x05,
     CommandTxDone = 0x06,
+    /// Unknown or reserved command status value.
     Unknown,
 }
 
