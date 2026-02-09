@@ -55,3 +55,5 @@ pub const REG_LORA_SYNC_WORD_LSB: u16 = 0x0741;
 pub const REG_RX_GAIN: u16 = 0x08AC;
 pub const REG_TX_CLAMP_CONFIG: u16 = 0x08D8;
 pub const REG_OCP_CONFIGURATION: u16 = 0x08E7;
+pub const REG_TX_MODULATION: u16 = 0x0889;
+pub const REG_IQ_POLARITY: u16 = 0x0736;
