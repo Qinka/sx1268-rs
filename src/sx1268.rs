@@ -1,52 +1,82 @@
+//! Core SX1268 driver implementation.
+//!
+//! This module contains the [`Sx1268`] struct and all methods for
+//! initialising the radio, configuring operational modes, transmitting
+//! and receiving LoRa packets, and reading diagnostic status.
+
 use crate::codes;
-/// Core SX1268 driver implementation.
 use crate::config::*;
 use crate::control::Control;
 
-/// Driver error type wrapping SPI errors.
+/// Driver error type.
+///
+/// Wraps low-level bus errors from the [`Control`] implementation as well
+/// as configuration and protocol-level errors detected by the driver.
 #[derive(Debug, defmt::Format)]
 pub enum Error<S> {
-  /// ConfigError
+  /// A configuration-time error (e.g. out-of-range frequency).
   ConfigError(ConfigError),
-  /// SPI bus error.
+  /// An error propagated from the underlying [`Control`] implementation.
   ControlError(S),
-  /// Invalid or unexpected device status.
+  /// The device returned an unexpected or invalid status byte.
   InvalidStatus,
-  /// Operation timed out.
+  /// An operation exceeded the permitted timeout.
   Timeout,
-  /// Invalid parameter.
+  /// A parameter passed to a driver method is invalid.
   InvalidParameter,
 }
 
 impl<E> Error<E> {
+  /// Wrap a raw bus error into [`Error::ControlError`].
   pub fn from_spi_error(e: E) -> Self {
     Error::ControlError(e)
   }
 }
 
+/// IRQ source bitmask values.
+///
+/// Each variant corresponds to a single bit in the 16-bit IRQ status
+/// register.  Use [`All`](Self::All) to match / clear every flag.
 #[derive(Debug, defmt::Format, Copy, Clone)]
 pub enum IrqMasks {
+  /// No IRQ.
   None = 0,
+  /// Packet transmission completed.
   TxDone = 0x0001,
+  /// Packet reception completed.
   RxDone = 0x0002,
+  /// Preamble detected during RX.
   PreambleDetected = 0x0004,
+  /// Valid sync word detected (GFSK only).
   SyncWordValid = 0x0008,
+  /// Valid LoRa header received.
   HeaderValid = 0x0010,
+  /// LoRa header CRC error.
   HeaderError = 0x0020,
+  /// Payload CRC error.
   CrcError = 0x0040,
+  /// Channel Activity Detection completed.
   CadDone = 0x0080,
+  /// Channel activity was detected during CAD.
   CadDetected = 0x0100,
+  /// RX or TX timeout.
   Timeout = 0x0200,
+  /// All IRQ flags.
   All = 0x43FF,
 }
 
-/// Chip status mode.
+/// Chip operating mode, extracted from the status byte (bits 6:4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
 pub enum ChipMode {
+  /// Standby — RC oscillator.
   StbyRc = 0x02,
+  /// Standby — crystal oscillator.
   StbyXosc = 0x03,
+  /// Frequency-synthesis mode.
   Fs = 0x04,
+  /// Receive mode.
   Rx = 0x05,
+  /// Transmit mode.
   Tx = 0x06,
   /// Unknown or reserved chip mode value.
   Unknown,
@@ -65,13 +95,18 @@ impl From<u8> for ChipMode {
   }
 }
 
-/// Command status.
+/// Last command status, extracted from the status byte (bits 3:1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
 pub enum CommandStatus {
+  /// Data is available to be read.
   DataAvailable = 0x02,
+  /// The last command timed out.
   CommandTimeout = 0x03,
+  /// A processing error occurred.
   CommandProcessingError = 0x04,
+  /// The command could not be executed.
   FailureToExecute = 0x05,
+  /// A TX operation completed.
   CommandTxDone = 0x06,
   /// Unknown or reserved command status value.
   Unknown,
@@ -90,10 +125,22 @@ impl From<u8> for CommandStatus {
   }
 }
 
-/// Decoded device status.
+/// Decoded device status byte.
+///
+/// The SX1268 returns a status byte on every SPI transaction.  It
+/// encodes the current operating mode and the outcome of the last
+/// command:
+///
+/// ```text
+/// Bit 7 | 6:4       | 3:1            | 0
+/// ------|-----------|----------------|----
+/// Rsvd  | ChipMode  | CommandStatus  | Rsvd
+/// ```
 #[derive(Clone, Copy, Debug, defmt::Format)]
 pub struct Status {
+  /// Current chip operating mode.
   pub chip_mode: ChipMode,
+  /// Status of the last executed command.
   pub command_status: CommandStatus,
 }
 
@@ -105,19 +152,22 @@ impl From<u8> for Status {
     }
   }
 }
-/// RX buffer status.
+
+/// RX buffer status returned by `GetRxBufferStatus` (opcode `0x13`).
 #[derive(Clone, Copy, Debug, defmt::Format)]
 pub struct RxBufferStatus {
+  /// Number of bytes in the last received payload.
   pub payload_length: u8,
+  /// Start offset of the payload inside the 256-byte data buffer.
   pub buffer_start_pointer: u8,
 }
 
-/// LoRa packet status.
+/// LoRa packet status returned by `GetPacketStatus` (opcode `0x14`).
 #[derive(Clone, Copy, Debug, defmt::Format)]
 pub struct LoRaPacketStatus {
-  /// Average over last packet received of RSSI (dBm).
+  /// Average RSSI over the last received packet (dBm).
   pub rssi_pkt: i16,
-  /// Estimation of SNR on last packet received (dB).
+  /// Estimated SNR on the last received packet (dB).
   pub snr_pkt: i8,
   /// RSSI of the LoRa signal (dBm).
   pub signal_rssi_pkt: i16,
@@ -125,10 +175,14 @@ pub struct LoRaPacketStatus {
 
 /// SX1268 LoRa transceiver driver.
 ///
-/// This driver communicates with the SX1268 chip over SPI using the
-/// `embedded-hal` `SpiDevice` trait.
+/// Generic over a [`Control`] implementation that provides the low-level
+/// SPI and GPIO operations.  After construction with [`new`](Self::new),
+/// call [`init`](Self::init) with an [`Sx1268Config`] to bring the radio
+/// to an operational state.
 pub struct Sx1268<C> {
   control: C,
+  /// Retained configuration — set by [`init`](Self::init) and used by
+  /// higher-level methods like [`send_lora`](Self::send_lora).
   config: Option<Sx1268Config>,
 }
 
@@ -245,9 +299,24 @@ impl<C, E> Sx1268<C>
 where
   C: Control<Error = Error<E>>,
 {
+  /// Crystal oscillator frequency (32 MHz).
   const SX126X_XTAL_FREQ: u32 = 32_000_000;
+
+  /// Internal RTC frequency used for timeout calculations (64 kHz).
   const SX126X_RTC_FREQ_IN_HZ: u32 = 64000;
+
+  /// Number of fractional bits used in the PLL step calculation.
   const SX126X_PLL_STEP_SHIFT_AMOUNT: u32 = 14;
+
+  /// Pre-scaled PLL step size.
+  ///
+  /// ```text
+  /// PLL_STEP_SCALED = F_XTAL >> (25 - PLL_STEP_SHIFT_AMOUNT)
+  /// ```
+  ///
+  /// This constant avoids a 64-bit divide at runtime; instead
+  /// [`convert_freq_in_hz_to_pll_step`](Self::convert_freq_in_hz_to_pll_step)
+  /// uses only 32-bit arithmetic.
   const SX126X_PLL_STEP_SCALED: u32 =
     (Self::SX126X_XTAL_FREQ >> (25 - Self::SX126X_PLL_STEP_SHIFT_AMOUNT));
 
@@ -259,6 +328,31 @@ where
     }
   }
 
+  /// Initialise the SX1268 with the given configuration.
+  ///
+  /// This method performs the full chip bring-up sequence recommended by
+  /// the SX1268 datasheet:
+  ///
+  /// 1. **Hardware reset** — pulse NRESET via [`Control::reset`].
+  /// 2. **Wakeup** — bring the chip out of sleep via [`Control::wakeup`].
+  /// 3. **Standby (RC)** — enter STDBY_RC as the base configuration state.
+  /// 4. **Regulator** — select LDO or DC-DC+LDO.
+  /// 5. **DIO2 RF switch** — optionally enable DIO2 for antenna switch.
+  /// 6. **TCXO** — optionally configure DIO3 for TCXO supply.
+  /// 7. **Calibrate** — run the selected calibration blocks.
+  /// 8. **Packet type** — set GFSK or LoRa.
+  /// 9. **RF frequency** — program the PLL.
+  /// 10. **PA config** — configure duty cycle and HP max.
+  /// 11. **TX params** — set output power and ramp time.
+  /// 12. **Fallback mode** — define post-TX/RX state.
+  /// 13. **RX gain** — disable boosted gain (power-saving default).
+  /// 14. **Modulation params** — SF, BW, CR, LDRO.
+  /// 15. **Packet params** — preamble, header, payload, CRC, IQ.
+  /// 16. **Sync word** — configure the LoRa network sync word.
+  ///
+  /// After a successful return the radio is in STDBY_RC and ready for
+  /// [`send_lora`](Self::send_lora) or
+  /// [`wait_lora_packet`](Self::wait_lora_packet).
   pub fn init(&mut self, config: Sx1268Config) -> Result<(), Error<E>> {
     defmt::info!("Initializing SX1268");
     defmt::debug!("Config={:?}", config);
@@ -385,6 +479,13 @@ where
     self.control.write_command(codes::SET_FS, &[])
   }
 
+  /// Convert a millisecond timeout into SX1268 RTC step units.
+  ///
+  /// The SX1268 internal RTC runs at 64 kHz, so one RTC step = 15.625 µs.
+  ///
+  /// ```text
+  /// rtc_steps = timeout_ms × (RTC_FREQ / 1000)
+  /// ```
   pub fn timeout_to_rtc_step(timeout: u32) -> u32 {
     timeout * (Self::SX126X_RTC_FREQ_IN_HZ / 1000)
   }
@@ -444,6 +545,12 @@ where
       .write_command(codes::SET_RX_DUTY_CYCLE, &params)
   }
 
+  /// Set the RX gain mode.
+  ///
+  /// - `gain = false` — power-saving gain mode (register value `0x94`).
+  /// - `gain = true`  — boosted gain mode (register value `0x96`),
+  ///   which increases receive sensitivity at the cost of higher current
+  ///   consumption.
   pub fn set_rx_gain(&mut self, gain: bool) -> Result<(), Error<E>> {
     defmt::info!("SetRxGain gain={}", gain);
     let code = if gain { 0x96 } else { 0x94 };
@@ -609,6 +716,25 @@ where
   // RF, Modulation and Packet Configuration
   // -----------------------------------------------------------------------
 
+  /// Convert a frequency in Hz to a 32-bit PLL step value.
+  ///
+  /// The SX1268 PLL frequency register expects:
+  ///
+  /// ```text
+  /// freq_reg = freq_hz × 2²⁵ / F_XTAL
+  /// ```
+  ///
+  /// Because `2²⁵ / F_XTAL(32 MHz) = 1.048576`, a naïve multiplication
+  /// would overflow 32 bits for frequencies above ~4 GHz.  This
+  /// implementation avoids 64-bit arithmetic by using a pre-scaled
+  /// constant (`SX126X_PLL_STEP_SCALED`) and splitting the computation
+  /// into integer and fractional parts:
+  ///
+  /// ```text
+  /// steps_int  = freq_hz / PLL_STEP_SCALED
+  /// steps_frac = freq_hz - steps_int × PLL_STEP_SCALED
+  /// result     = (steps_int << 14) + round(steps_frac << 14 / PLL_STEP_SCALED)
+  /// ```
   fn convert_freq_in_hz_to_pll_step(freq_hz: u32) -> u32 {
     let steps_int = freq_hz / Self::SX126X_PLL_STEP_SCALED;
     let steps_frac = freq_hz - (steps_int * Self::SX126X_PLL_STEP_SCALED);
@@ -689,6 +815,14 @@ where
     Ok(())
   }
 
+  /// Apply the TX modulation quality workaround (Errata §15.1).
+  ///
+  /// When using **LoRa BW500**, bit 2 of `REG_TX_MODULATION` (`0x0889`)
+  /// must be **cleared**; for all other bandwidths (and GFSK) it must be
+  /// **set**.  Failure to do so may degrade the modulation quality.
+  ///
+  /// This method is called automatically by
+  /// [`set_lora_modulation_params`](Self::set_lora_modulation_params).
   fn tx_modulation_workaround(
     &mut self,
     package_type: PacketType,
@@ -716,6 +850,12 @@ where
   }
 
   /// Set LoRa packet parameters.
+  ///
+  /// After sending the `SetPacketParams` command this method also applies
+  /// the IQ polarity workaround (Errata §15.4): bit 2 of
+  /// `REG_IQ_POLARITY` (`0x0736`) is **cleared** when IQ inversion is
+  /// enabled and **set** when using normal IQ, to ensure correct receive
+  /// behaviour.
   pub fn set_lora_packet_params(&mut self, params: LoRaPacketParams) -> Result<(), Error<E>> {
     defmt::info!("SetPacketParams(LoRa) params={}", params);
     let data = [
@@ -873,12 +1013,25 @@ where
     Ok(())
   }
 
-  /// Send a packet of data using LoRa modulation.
+  /// Send a LoRa packet.
   ///
-  /// This writes the payload to the TX buffer, configures the payload length,
-  /// and initiates transmission. The caller should check IRQ status for TX_DONE.
+  /// This is a convenience method that:
+  /// 1. Updates the packet-params payload length to match `data.len()`.
+  /// 2. Writes the payload into the TX buffer at offset 0.
+  /// 3. Configures DIO1 for `TxDone` IRQ and clears pending flags.
+  /// 4. Switches the platform-level RF path to TX.
+  /// 5. Starts the transmission with the given timeout.
   ///
-  /// `timeout` is the TX timeout in units of 15.625 µs (0 = no timeout).
+  /// The caller should monitor the `TxDone` IRQ (via DIO1 or polling
+  /// [`get_irq_status`](Self::get_irq_status)) to know when the
+  /// transmission has completed.
+  ///
+  /// `timeout` is in RTC step units (15.625 µs each); `0` means no
+  /// timeout.
+  ///
+  /// # Panics
+  ///
+  /// Does nothing (no error) if [`init`](Self::init) has not been called.
   pub fn send_lora(&mut self, data: &[u8], timeout: u32) -> Result<(), Error<E>> {
     defmt::info!("SendLoRa len={} timeout={}", data.len(), timeout);
     if let Some(config) = &self.config {
@@ -902,12 +1055,24 @@ where
     Ok(())
   }
 
-  /// Start to wait a received LoRa packet from the RX buffer.
+  /// Begin listening for a LoRa packet and return a *reader* closure.
   ///
-  /// Returns the number of bytes read. `buf` must be large enough to hold the
-  /// received payload.
+  /// This method:
+  /// 1. Updates the packet-params payload length to match `buf.len()`.
+  /// 2. Configures DIO1 for `RxDone` IRQ and clears pending flags.
+  /// 3. Switches the platform-level RF path to RX.
+  /// 4. Starts the receiver with the given timeout.
   ///
-  /// `timeout` is the TX timeout in units of 15.625 µs (0 = no timeout).
+  /// The returned closure captures `buf` and, when invoked with the
+  /// buffer start offset obtained from [`get_rx_buffer_status`], reads
+  /// the received payload from the chip's data buffer.
+  ///
+  /// Use [`try_receive_lora_packet`](Self::try_receive_lora_packet) in a
+  /// loop (or after a DIO1 interrupt) to check for completion and
+  /// invoke the reader.
+  ///
+  /// `timeout` is in RTC step units (15.625 µs each); `0` = no timeout,
+  /// `0xFFFFFF` = continuous RX.
   #[allow(clippy::type_complexity)]
   pub fn wait_lora_packet(
     &mut self,
@@ -942,9 +1107,20 @@ where
     Ok(reader)
   }
 
-  /// Try reciving a LoRa packet if available, returning the number of bytes read.
-  /// The caller should first call `wait_lora_packet()` to start waiting for a packet
-  /// and then call this method when an IRQ indicates a packet has been received.
+  /// Poll for a received LoRa packet and optionally read it.
+  ///
+  /// Call this method after [`wait_lora_packet`](Self::wait_lora_packet)
+  /// to check whether the `RxDone` IRQ has fired.
+  ///
+  /// # Return value
+  ///
+  /// - `Ok((Some(len), None))` — a packet was received; `len` bytes have
+  ///   been written into the buffer captured by `reader`.  The reader has
+  ///   been consumed.
+  /// - `Ok((None, Some(reader)))` — no packet yet; the reader is handed
+  ///   back so it can be re-used on the next poll.
+  /// - `Ok((None, None))` — the `RxDone` IRQ fired but the payload length
+  ///   was zero (spurious).
   pub fn try_receive_lora_packet<F>(
     &mut self,
     reader: F,
