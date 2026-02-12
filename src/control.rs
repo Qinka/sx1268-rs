@@ -1,34 +1,88 @@
+//! Hardware abstraction trait for communicating with the SX1268.
+//!
+//! The [`Control`] trait decouples the driver logic in [`crate::sx1268::Sx1268`]
+//! from the concrete hardware layer (SPI bus, chip-select, RESET and BUSY
+//! GPIOs, etc.).  Users implement this trait for their particular platform
+//! and pass the implementation to [`Sx1268::new`](crate::Sx1268::new).
+//!
+//! All SPI framing details — e.g. the required NOP byte after the opcode
+//! for read commands, or the 3-byte address header for register access —
+//! are handled *inside* the `Control` implementation so the upper driver
+//! layer can work at a purely logical level.
+
+/// Low-level hardware control interface for the SX1268 transceiver.
+///
+/// Every method maps to a well-defined SPI transaction as described in
+/// the SX1268 datasheet §8.  Implementations must honour the chip's
+/// timing constraints (e.g. waiting for BUSY to go low after each
+/// command).
 pub trait Control {
+  /// The device status type returned by read operations.
   type Status;
+  /// The error type propagated from the underlying bus.
   type Error;
 
-  /// write_command sends a command with the given opcode and parameters to the SX1268, returning the resulting status or an error.
+  /// Send a write-command to the SX1268.
+  ///
+  /// SPI frame: `[opcode, params…]`.
+  /// The chip does not return meaningful data; only errors are reported.
   fn write_command(&mut self, opcode: u8, params: &[u8]) -> Result<(), Self::Error>;
-  /// read_command sends a command with the given opcode and parameters to the SX1268, then reads back the resulting status or an error.
+
+  /// Send a read-command to the SX1268 and receive the response.
+  ///
+  /// SPI frame: `[opcode, NOP] → [status] → [response…]`.
+  /// The first response byte contains the device status.
   fn read_command(&mut self, opcode: u8, params: &mut [u8]) -> Result<Self::Status, Self::Error>;
 
-  /// write register writes a value to the specified register address.
+  /// Write to one or more contiguous internal registers.
+  ///
+  /// SPI frame: `[WRITE_REGISTER(0x0D), addr_hi, addr_lo, data…]`.
   fn write_register(&mut self, address: u16, data: &[u8]) -> Result<(), Self::Error>;
-  /// read register reads a value from the specified register address.
+
+  /// Read from one or more contiguous internal registers.
+  ///
+  /// SPI frame: `[READ_REGISTER(0x1D), addr_hi, addr_lo, NOP] → [data…]`.
   fn read_register(&mut self, address: u16, data: &mut [u8]) -> Result<(), Self::Error>;
 
-  /// write buffer writes data to the specified buffer address.
+  /// Write payload data into the TX buffer at `address`.
+  ///
+  /// SPI frame: `[WRITE_BUFFER(0x0E), offset, data…]`.
   fn write_buffer(&mut self, address: u8, data: &[u8]) -> Result<(), Self::Error>;
-  /// read buffer reads data from the specified buffer address.
+
+  /// Read payload data from the RX buffer starting at `address`.
+  ///
+  /// SPI frame: `[READ_BUFFER(0x1E), offset, NOP] → [data…]`.
   fn read_buffer(&mut self, address: u8, data: &mut [u8]) -> Result<(), Self::Error>;
 
-  /// get_status reads the current status of the SX1268, returning it or an error.
+  /// Read the device status byte.
+  ///
+  /// SPI frame: `[GET_STATUS(0xC0)] → [status]`.
+  ///
+  /// The status byte encodes the current chip mode (bits 6:4) and the
+  /// last command status (bits 3:1).
   fn get_status(&mut self) -> Result<Self::Status, Self::Error>;
 
-  /// reset performs a hardware reset of the SX1268, returning Ok on success or an error.
+  /// Perform a hardware reset of the SX1268.
+  ///
+  /// The implementation should pull the NRESET pin low for ≥ 100 µs
+  /// and then wait for the chip to become ready (BUSY low).
   fn reset(&mut self) -> Result<(), Self::Error>;
 
-  /// wakeup wakes the SX1268 from sleep mode, returning Ok on success or an error.
+  /// Wake the SX1268 from sleep mode.
+  ///
+  /// Typically achieved by driving NSS low momentarily while the chip
+  /// is in sleep, which triggers the internal wakeup sequence.
   fn wakeup(&mut self) -> Result<(), Self::Error>;
 
-  /// switch tx: switch the SX1268 to transmit mode, returning Ok on success or an error.
+  /// Switch the radio to TX mode with the given timeout.
+  ///
+  /// This is a platform-level helper that may include additional steps
+  /// such as toggling an external RF switch before calling `SetTx`.
   fn switch_tx(&mut self, timeout: u32) -> Result<(), Self::Error>;
 
-  /// switch rx: switch the SX1268 to receive mode, returning Ok on success or an error.
+  /// Switch the radio to RX mode with the given timeout.
+  ///
+  /// This is a platform-level helper that may include additional steps
+  /// such as toggling an external RF switch before calling `SetRx`.
   fn switch_rx(&mut self, timeout: u32) -> Result<(), Self::Error>;
 }

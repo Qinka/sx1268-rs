@@ -1,4 +1,27 @@
-/// LoRa spreading factor.
+//! LoRa modulation parameters.
+//!
+//! LoRa uses Chirp Spread Spectrum (CSS) modulation. Three primary
+//! parameters control the trade-off between range, data rate and
+//! airtime:
+//!
+//! | Parameter           | Effect when increased |
+//! |---------------------|-----------------------|
+//! | Spreading Factor    | ↑ range, ↓ data rate  |
+//! | Bandwidth           | ↑ data rate, ↓ range  |
+//! | Coding Rate (denom) | ↑ resilience, ↓ data rate |
+//!
+//! Additionally, **Low Data Rate Optimization (LDRO)** must be enabled
+//! when the symbol duration exceeds 16.38 ms (i.e. SF11/BW125 or
+//! SF12/BW125).
+
+/// LoRa spreading factor (SF5–SF12).
+///
+/// 扩频因子（Spreading Factor, SF）定义了单个符号中包含的 chirp 数量
+/// （`2^SF` 个 chirp/symbol）。更高的 SF 提供更大的处理增益（更远的
+/// 通信距离），但每个符号的空中时间也成倍增长，因而降低有效数据速率。
+///
+/// 不同 SF 之间具有正交性——同一频率上使用不同 SF 的信号互不干扰，
+/// 这是 LoRaWAN 网络容量管理的基础。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
 pub enum LoRaSpreadingFactor {
   Sf5 = 0x05,
@@ -12,7 +35,7 @@ pub enum LoRaSpreadingFactor {
 }
 
 impl LoRaSpreadingFactor {
-  /// Get spreading factor as integer.
+  /// Return the spreading factor as a plain integer (5–12).
   pub fn as_sf(&self) -> u8 {
     match self {
       LoRaSpreadingFactor::Sf5 => 5,
@@ -27,7 +50,13 @@ impl LoRaSpreadingFactor {
   }
 }
 
-/// LoRa bandwidth.
+/// LoRa signal bandwidth.
+///
+/// 带宽（BW）决定了 chirp 扫频的频率范围。更大的带宽使符号时间更短，
+/// 从而提升数据速率并降低对时钟误差的敏感度；但占用更多频谱且接收灵敏度
+/// 下降（噪底升高）。
+///
+/// SX1268 支持从 7.81 kHz 到 500 kHz 的多档带宽选择。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
 pub enum LoRaBandwidth {
   /// 7.81 kHz
@@ -53,7 +82,7 @@ pub enum LoRaBandwidth {
 }
 
 impl LoRaBandwidth {
-  /// Get bandwidth in kHz.
+  /// Return the bandwidth as an approximate integer in kHz.
   pub fn as_khz(&self) -> u32 {
     match self {
       LoRaBandwidth::Bw7 => 7,
@@ -70,7 +99,14 @@ impl LoRaBandwidth {
   }
 }
 
-/// LoRa coding rate.
+/// LoRa forward error-correction coding rate.
+///
+/// 编码率（Coding Rate, CR）定义了前向纠错（FEC）冗余。LoRa 使用 4/N
+/// 编码，其中 N = 5 ~ 8。分母越大，冗余越多，抗干扰能力越强，但有效
+/// 数据速率越低（空中时间增加）。
+///
+/// 在显式报头模式下 CR 会被写入报头，接收端自动匹配；在隐式报头模式下
+/// 收发两端必须配置相同的 CR。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
 pub enum LoRaCodingRate {
   /// 4/5
@@ -84,7 +120,7 @@ pub enum LoRaCodingRate {
 }
 
 impl LoRaCodingRate {
-  /// Get coding rate as fraction.
+  /// Return the coding rate as a `(numerator, denominator)` tuple.
   pub fn as_cr(&self) -> (u8, u8) {
     match self {
       LoRaCodingRate::Cr4_5 => (4, 5),
@@ -95,7 +131,18 @@ impl LoRaCodingRate {
   }
 }
 
-/// LoRa modulation parameters.
+/// Combined LoRa modulation parameters.
+///
+/// 四个参数共同决定了 LoRa 链路的物理层特性：
+///
+/// - **sf** — 扩频因子，控制处理增益（范围/灵敏度 vs 数据速率）
+/// - **bw** — 带宽，控制符号速率和噪底
+/// - **cr** — 编码率，控制前向纠错冗余
+/// - **low_data_rate_optimize** — 当符号时间 > 16.38 ms 时必须启用
+///   （即 SF11/BW125 或 SF12/BW125）
+///
+/// 默认值：SF7 / BW125 / CR4_5 / LDRO off — 这是最常用的 LoRa 配置
+/// 之一，在数据速率和链路预算之间取得良好平衡。
 #[derive(Clone, Copy, Debug, defmt::Format)]
 pub struct LoRaModulationParams {
   pub(crate) sf: LoRaSpreadingFactor,
@@ -116,29 +163,38 @@ impl Default for LoRaModulationParams {
 }
 
 impl LoRaModulationParams {
-  /// setup spreading factor.
-  /// 扩频因子（Spreading Factor, SF）定义了一个符号中所包含的码片数量，LoRa 通常支持 SF6 至 SF12。
-  /// SF 的变化直接影响信号的处理增益：
-  /// SF 数值越大，单位比特被扩展得越长，接收端越容易从噪声中恢复信号
-  /// 相应代价是符号时间显著拉长，数据速率下降，空中占用时间增加
+  /// Set the spreading factor.
+  ///
+  /// 扩频因子（SF）定义了每个符号中的码片数 (2^SF chips/symbol)。
+  /// SF 越大，接收灵敏度越高（更远距离），但符号时间成倍增长，
+  /// 数据速率下降，空中占用时间增加。
   pub fn with_spreading_factor(mut self, sf: LoRaSpreadingFactor) -> Self {
     self.sf = sf;
     self
   }
 
-  /// setup bandwidth.
+  /// Set the signal bandwidth.
+  ///
+  /// 带宽越大，符号时间越短、数据速率越高，但接收灵敏度下降（噪底升高）。
+  /// 常用组合：SF7/BW125（高速）、SF12/BW125（远距离）。
   pub fn with_bandwidth(mut self, bw: LoRaBandwidth) -> Self {
     self.bw = bw;
     self
   }
 
-  /// setup coding rate.
+  /// Set the forward error-correction coding rate.
+  ///
+  /// 编码率分母越大，冗余越多，纠错能力越强，但有效数据速率越低。
+  /// 通常 CR4/5 已足够，仅在干扰严重时选择更高冗余。
   pub fn with_coding_rate(mut self, cr: LoRaCodingRate) -> Self {
     self.cr = cr;
     self
   }
 
-  /// setup low data rate optimization.
+  /// Enable or disable Low Data Rate Optimization (LDRO).
+  ///
+  /// 当符号持续时间超过 16.38 ms 时（如 SF11/BW125 或 SF12/BW125），
+  /// 必须开启 LDRO 以避免因时钟漂移导致的解调失败。
   pub fn with_low_data_rate_optimize(mut self, optimize: bool) -> Self {
     self.low_data_rate_optimize = optimize;
     self
