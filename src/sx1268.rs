@@ -251,8 +251,6 @@ where
   const SX126X_PLL_STEP_SCALED: u32 =
     (Self::SX126X_XTAL_FREQ >> (25 - Self::SX126X_PLL_STEP_SHIFT_AMOUNT));
 
-
-
   /// Create a new SX1268 driver instance.
   pub fn new(control: C) -> Self {
     Self {
@@ -388,7 +386,7 @@ where
   }
 
   pub fn timeout_to_rtc_step(timeout: u32) -> u32 {
-    timeout * ( Self::SX126X_RTC_FREQ_IN_HZ / 1000 )
+    timeout * (Self::SX126X_RTC_FREQ_IN_HZ / 1000)
   }
 
   /// Set the device into transmit mode.
@@ -569,9 +567,10 @@ where
   /// Clear the specified IRQ flags.
   pub fn clear_irq_status(&mut self, mask: IrqMasks) -> Result<(), Error<E>> {
     defmt::debug!("ClearIrqStatus mask=0x{:04X}", mask);
-    self
-      .control
-      .write_command(codes::CLEAR_IRQ_STATUS, &[(mask as u16 >> 8) as u8, mask as u8])
+    self.control.write_command(
+      codes::CLEAR_IRQ_STATUS,
+      &[(mask as u16 >> 8) as u8, mask as u8],
+    )
   }
 
   /// Set DIO2 as RF switch control.
@@ -703,10 +702,10 @@ where
       if bandwidth == LoRaBandwidth::Bw500 {
         reg_value[0] &= !(1 << 2); // Set bit 0 for 500 kHz bandwidth
       } else {
-        reg_value[0] |= (1 << 2); // Clear bit 0 for other bandwidths
+        reg_value[0] |= 1 << 2; // Clear bit 0 for other bandwidths
       }
     } else {
-      reg_value[0] |= (1 << 2);
+      reg_value[0] |= 1 << 2;
     }
 
     self
@@ -738,7 +737,7 @@ where
     if params.invert_iq {
       reg_value[0] &= !(1 << 2); // Set bit 2 to invert IQ
     } else {
-      reg_value[0] |= (1 << 2); // Clear bit 2 for normal IQ
+      reg_value[0] |= 1 << 2; // Clear bit 2 for normal IQ
     }
 
     self
@@ -883,11 +882,16 @@ where
   pub fn send_lora(&mut self, data: &[u8], timeout: u32) -> Result<(), Error<E>> {
     defmt::info!("SendLoRa len={} timeout={}", data.len(), timeout);
     if let Some(config) = &self.config {
-      let mut package = config.lora_packet.clone();
-      package.payload_length = data.len() as u8;
+      let mut package = config.lora_packet;
+      package.payload_length = data.len().min(255) as u8;
       self.set_lora_packet_params(package)?;
       self.control.write_buffer(0x00, data)?;
-      self.set_dio_irq_params(IrqMasks::TxDone, IrqMasks::TxDone, IrqMasks::None, IrqMasks::None)?;
+      self.set_dio_irq_params(
+        IrqMasks::TxDone,
+        IrqMasks::TxDone,
+        IrqMasks::None,
+        IrqMasks::None,
+      )?;
       self.clear_irq_status(IrqMasks::All)?;
       self.control.switch_tx(0)?;
       self.set_tx(timeout)?;
@@ -898,25 +902,84 @@ where
     Ok(())
   }
 
-  /// Read a received LoRa packet from the RX buffer.
+  /// Start to wait a received LoRa packet from the RX buffer.
   ///
   /// Returns the number of bytes read. `buf` must be large enough to hold the
   /// received payload.
-  pub fn read_lora_packet(&mut self, buf: &mut [u8]) -> Result<usize, Error<E>> {
-    let rx_status = self.get_rx_buffer_status()?;
-    let len = rx_status.payload_length as usize;
-    if len > buf.len() {
-      defmt::warn!(
-        "RX payload ({} bytes) exceeds buffer ({} bytes)",
-        len,
-        buf.len()
-      );
-      return Err(Error::InvalidParameter);
+  ///
+  /// `timeout` is the TX timeout in units of 15.625 µs (0 = no timeout).
+  #[allow(clippy::type_complexity)]
+  pub fn wait_lora_packet(
+    &mut self,
+    buf: &mut [u8],
+    timeout: u32,
+  ) -> Result<impl FnOnce(&mut Self, u8) -> Result<usize, Error<E>>, Error<E>> {
+    if let Some(config) = &self.config {
+      let mut package = config.lora_packet;
+      package.payload_length = buf.len().min(255) as u8;
+      defmt::debug!("payload_length={}", package.payload_length);
+      self.set_lora_packet_params(package)?;
+      self.set_dio_irq_params(
+        IrqMasks::RxDone,
+        IrqMasks::RxDone,
+        IrqMasks::None,
+        IrqMasks::None,
+      )?;
+      self.clear_irq_status(IrqMasks::All)?;
+      self.control.switch_rx(0)?;
+      self.set_rx(timeout)?;
+      defmt::info!("Waiting for LoRa packet...");
     }
-    self
-      .control
-      .read_buffer(rx_status.buffer_start_pointer, &mut buf[..len])?;
-    defmt::info!("ReadLoRaPacket len={}", len);
-    Ok(len)
+
+    let reader = move |driver: &mut Self, offset: u8| {
+      defmt::debug!("Reading LoRa packet from buffer with offset={}", offset);
+      driver.control.read_buffer(offset, buf)?;
+      let size = buf.len().min(255);
+      defmt::info!("Read {} bytes from RX buffer", size);
+      Ok(size)
+    };
+
+    Ok(reader)
+  }
+
+  /// Try reciving a LoRa packet if available, returning the number of bytes read.
+  /// The caller should first call `wait_lora_packet()` to start waiting for a packet
+  /// and then call this method when an IRQ indicates a packet has been received.
+  pub fn try_receive_lora_packet<F>(
+    &mut self,
+    reader: F,
+  ) -> Result<(Option<usize>, Option<F>), Error<E>>
+  where
+    F: FnOnce(&mut Self, u8) -> Result<usize, Error<E>>,
+  {
+    let irq = self.get_irq_status()?;
+
+    if irq == IrqMasks::None as u16 {
+      defmt::debug!("No IRQ flags set, no packet received yet");
+      return Ok((None, Some(reader)));
+    }
+
+    if irq & IrqMasks::PreambleDetected as u16 != 0 {
+      defmt::debug!("LoRa preamble detected");
+    }
+
+    if irq & IrqMasks::RxDone as u16 != 0 {
+      let buffer_status = self.get_rx_buffer_status()?;
+      defmt::debug!("RX buffer status: {}", buffer_status);
+
+      if buffer_status.payload_length == 0 {
+        defmt::warn!("RX done IRQ but payload length is 0, clearing IRQ and returning");
+        self.clear_irq_status(IrqMasks::RxDone)?;
+        return Ok((None, None));
+      }
+
+      let size = reader(self, buffer_status.buffer_start_pointer)?;
+      defmt::info!("LoRa packet received, reading from buffer...");
+
+      Ok((Some(size), None))
+    } else {
+      defmt::debug!("No LoRa packet received yet (IRQ=0x{:04X})", irq);
+      Ok((None, Some(reader)))
+    }
   }
 }

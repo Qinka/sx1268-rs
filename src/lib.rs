@@ -8,5 +8,5 @@ pub mod control;
 pub mod codes;
 
 mod sx1268;
-pub use sx1268::{Sx1268, Error, Status};
 pub use config::Sx1268Config;
+pub use sx1268::{Error, Status, Sx1268};

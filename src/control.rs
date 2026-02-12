@@ -31,5 +31,4 @@ pub trait Control {
 
   /// switch rx: switch the SX1268 to receive mode, returning Ok on success or an error.
   fn switch_rx(&mut self, timeout: u32) -> Result<(), Self::Error>;
-
 }
