@@ -3,7 +3,7 @@ mod pa_config;
 mod package;
 mod types;
 
-pub use modulation::{LoRaModulationParams, LoRaBandwidth, LoRaCodingRate, LoRaSpreadingFactor};
+pub use modulation::{LoRaBandwidth, LoRaCodingRate, LoRaModulationParams, LoRaSpreadingFactor};
 pub use pa_config::PaConfig;
 pub use package::{LoRaHeaderType, LoRaPacketParams, PacketType};
 pub use types::{
@@ -267,5 +267,4 @@ impl Sx1268Config {
   pub fn get_pa_hp_max(&self) -> u8 {
     self.pa_config.hp_max
   }
-
 }

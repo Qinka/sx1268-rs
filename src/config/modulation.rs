@@ -95,7 +95,6 @@ impl LoRaCodingRate {
   }
 }
 
-
 /// LoRa modulation parameters.
 #[derive(Clone, Copy, Debug, defmt::Format)]
 pub struct LoRaModulationParams {
@@ -144,5 +143,4 @@ impl LoRaModulationParams {
     self.low_data_rate_optimize = optimize;
     self
   }
-
 }
