@@ -1029,9 +1029,10 @@ where
   /// `timeout` is in RTC step units (15.625 µs each); `0` means no
   /// timeout.
   ///
-  /// # Panics
+  /// # Note
   ///
-  /// Does nothing (no error) if [`init`](Self::init) has not been called.
+  /// Returns `Ok(())` immediately without sending anything if
+  /// [`init`](Self::init) has not been called yet.
   pub fn send_lora(&mut self, data: &[u8], timeout: u32) -> Result<(), Error<E>> {
     defmt::info!("SendLoRa len={} timeout={}", data.len(), timeout);
     if let Some(config) = &self.config {
