@@ -2,6 +2,12 @@
 name = "sx1268-rs"
 version = "0.1.0"
 edition = "2024"
+authors = ["Johann Li <me@qinka.pro> @Qinka"]
+description = "A Rust driver for the SX1268 LoRa module."
+repository = "https://github.com/Qinka/sx1268-rs"
+keywords = ["embedded", "lora", "sx1268", "rust"]
+categories = ["embedded", "communication"]
+license = "Apache-2.0"
 
 [dependencies]
 defmt = "1.0.1"
