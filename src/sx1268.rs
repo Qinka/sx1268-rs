@@ -707,7 +707,9 @@ where
   pub fn get_irq_status(&mut self) -> Result<u16, Error<E>> {
     let param = [0u8; 1];
     let mut buf = [0u8; 2];
-    self.control.read_command(codes::GET_IRQ_STATUS, &param, &mut buf)?;
+    self
+      .control
+      .read_command(codes::GET_IRQ_STATUS, &param, &mut buf)?;
     // defmt::info!("GetIrqStatus raw=0x{:02X}{:02X}", buf[0], buf[1]);
     let irq = u16::from_be_bytes([buf[0], buf[1]]);
     // defmt::info!("GetIrqStatus irq=0x{:04X}", irq);
@@ -987,7 +989,9 @@ where
   pub fn get_rssi_inst(&mut self) -> Result<i16, Error<E>> {
     let param = [0u8; 1];
     let mut buf = [0u8; 1];
-    self.control.read_command(codes::GET_RSSI_INST, &param, &mut buf)?;
+    self
+      .control
+      .read_command(codes::GET_RSSI_INST, &param, &mut buf)?;
     let rssi = -(buf[0] as i16) / 2;
     defmt::debug!("GetRssiInst rssi={}dBm", rssi);
     Ok(rssi)
@@ -1120,19 +1124,15 @@ where
     if let Some(config) = &self.config {
       let mut package = config.lora_packet;
       package.payload_length = 255; // RX 时 payload length 由接收的包决定
-      let rx_irq_mask = IrqMasks::RxDone | IrqMasks::Timeout | IrqMasks::HeaderError | IrqMasks::CrcError;
+      let rx_irq_mask =
+        IrqMasks::RxDone | IrqMasks::Timeout | IrqMasks::HeaderError | IrqMasks::CrcError;
       let tx_base = config.tx_base_address;
       let rx_base = config.rx_base_address;
       // defmt::info!("Starting LoRa RX with packet params: {:?}", package);
       self.set_lora_packet_params(package)?;
       // 每次进入 RX 前重置 buffer 指针，防止多次接收后 buffer_start_pointer 累积漂移
       self.set_buffer_base_address(tx_base, rx_base)?;
-      self.set_dio_irq_params(
-        rx_irq_mask,
-        rx_irq_mask,
-        IrqMasks::None,
-        IrqMasks::None,
-      )?;
+      self.set_dio_irq_params(rx_irq_mask, rx_irq_mask, IrqMasks::None, IrqMasks::None)?;
       self.clear_irq_status(IrqMasks::All)?;
       self.control.switch_rx(0)?;
       self.set_rx(timeout)?;
@@ -1177,7 +1177,7 @@ where
       return Ok(None);
     }
 
-    let packet_status = self.get_lora_packet_status()?;
+    let _packet_status = self.get_lora_packet_status()?;
     // defmt::info!("LoRa packet status: {}", packet_status);
 
     let buffer_status = self.get_rx_buffer_status()?;

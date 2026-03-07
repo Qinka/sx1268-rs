@@ -45,7 +45,12 @@ pub trait Control {
   ///
   /// SPI frame: `[opcode, NOP] → [status] → [response…]`.
   /// The first response byte contains the device status.
-  fn read_command(&mut self, opcode: u8, params: &[u8], response: &mut [u8]) -> Result<Self::Status, Self::Error>;
+  fn read_command(
+    &mut self,
+    opcode: u8,
+    params: &[u8],
+    response: &mut [u8],
+  ) -> Result<Self::Status, Self::Error>;
 
   /// Write to one or more contiguous internal registers.
   ///

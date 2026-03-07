@@ -11,7 +11,6 @@
 //
 // Copyright (C) 2026 Johann Li <me@qinka.pro>, Wareless Group
 
-
 //! # sx1268-rs
 //!
 //! A `no_std` Rust driver for the Semtech SX1268 sub-GHz LoRa transceiver.

@@ -11,7 +11,6 @@
 //
 // Copyright (C) 2026 Johann Li <me@qinka.pro>, Wareless Group
 
-
 //! Miscellaneous configuration types shared across the SX1268 driver.
 
 /// PA ramp time — the rise-time of the power amplifier output.
