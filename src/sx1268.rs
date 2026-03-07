@@ -17,6 +17,8 @@
 //! initialising the radio, configuring operational modes, transmitting
 //! and receiving LoRa packets, and reading diagnostic status.
 
+use defmt::warn;
+
 use crate::codes;
 use crate::config::*;
 use crate::control::Control;
@@ -48,34 +50,60 @@ impl<E> Error<E> {
 
 /// IRQ source bitmask values.
 ///
-/// Each variant corresponds to a single bit in the 16-bit IRQ status
-/// register.  Use [`All`](Self::All) to match / clear every flag.
-#[derive(Debug, defmt::Format, Copy, Clone)]
-pub enum IrqMasks {
+/// Each constant corresponds to one or more bits in the 16-bit IRQ
+/// status register. Use [`All`](Self::All) to match / clear every flag.
+#[derive(Debug, defmt::Format, Copy, Clone, PartialEq, Eq)]
+pub struct IrqMasks(u16);
+
+#[allow(non_upper_case_globals)]
+impl IrqMasks {
   /// No IRQ.
-  None = 0,
+  pub const None: Self = Self(0);
   /// Packet transmission completed.
-  TxDone = 0x0001,
+  pub const TxDone: Self = Self(0x0001);
   /// Packet reception completed.
-  RxDone = 0x0002,
+  pub const RxDone: Self = Self(0x0002);
   /// Preamble detected during RX.
-  PreambleDetected = 0x0004,
+  pub const PreambleDetected: Self = Self(0x0004);
   /// Valid sync word detected (GFSK only).
-  SyncWordValid = 0x0008,
+  pub const SyncWordValid: Self = Self(0x0008);
   /// Valid LoRa header received.
-  HeaderValid = 0x0010,
+  pub const HeaderValid: Self = Self(0x0010);
   /// LoRa header CRC error.
-  HeaderError = 0x0020,
+  pub const HeaderError: Self = Self(0x0020);
   /// Payload CRC error.
-  CrcError = 0x0040,
+  pub const CrcError: Self = Self(0x0040);
   /// Channel Activity Detection completed.
-  CadDone = 0x0080,
+  pub const CadDone: Self = Self(0x0080);
   /// Channel activity was detected during CAD.
-  CadDetected = 0x0100,
+  pub const CadDetected: Self = Self(0x0100);
   /// RX or TX timeout.
-  Timeout = 0x0200,
+  pub const Timeout: Self = Self(0x0200);
   /// All IRQ flags.
-  All = 0x43FF,
+  pub const All: Self = Self(0x03FF);
+
+  fn bits(self) -> u16 {
+    self.0
+  }
+
+  fn intersects(self, bits: u16) -> bool {
+    bits & self.bits() != 0
+  }
+}
+
+use core::ops::{BitOr, BitOrAssign};
+
+impl BitOr for IrqMasks {
+  type Output = Self;
+  fn bitor(self, rhs: Self) -> Self::Output {
+    Self(self.bits() | rhs.bits())
+  }
+}
+
+impl BitOrAssign for IrqMasks {
+  fn bitor_assign(&mut self, rhs: Self) {
+    *self = *self | rhs;
+  }
 }
 
 /// Chip operating mode, extracted from the status byte (bits 6:4).
@@ -522,7 +550,7 @@ where
   /// - 0x000000 = no timeout (RX single mode)
   /// - 0xFFFFFF = continuous RX mode
   pub fn set_rx(&mut self, timeout: u32) -> Result<(), Error<E>> {
-    defmt::info!("SetRx timeout=0x{:06X}", timeout);
+    // defmt::info!("SetRx timeout=0x{:06X}", timeout);
     let params = [
       ((timeout >> 16) & 0xFF) as u8,
       ((timeout >> 8) & 0xFF) as u8,
@@ -653,22 +681,22 @@ where
     dio2_mask: IrqMasks,
     dio3_mask: IrqMasks,
   ) -> Result<(), Error<E>> {
-    defmt::info!(
-      "SetDioIrqParams irq=0x{:04X} dio1=0x{:04X} dio2=0x{:04X} dio3=0x{:04X}",
-      irq_mask,
-      dio1_mask,
-      dio2_mask,
-      dio3_mask
-    );
+    // defmt::info!(
+    //   "SetDioIrqParams irq=0x{:04X} dio1=0x{:04X} dio2=0x{:04X} dio3=0x{:04X}",
+    //   irq_mask.bits(),
+    //   dio1_mask.bits(),
+    //   dio2_mask.bits(),
+    //   dio3_mask.bits()
+    // );
     let params = [
-      (irq_mask as u16 >> 8) as u8,
-      irq_mask as u8,
-      (dio1_mask as u16 >> 8) as u8,
-      dio1_mask as u8,
-      (dio2_mask as u16 >> 8) as u8,
-      dio2_mask as u8,
-      (dio3_mask as u16 >> 8) as u8,
-      dio3_mask as u8,
+      (irq_mask.bits() >> 8) as u8,
+      irq_mask.bits() as u8,
+      (dio1_mask.bits() >> 8) as u8,
+      dio1_mask.bits() as u8,
+      (dio2_mask.bits() >> 8) as u8,
+      dio2_mask.bits() as u8,
+      (dio3_mask.bits() >> 8) as u8,
+      dio3_mask.bits() as u8,
     ];
     self
       .control
@@ -677,19 +705,21 @@ where
 
   /// Get the current IRQ status.
   pub fn get_irq_status(&mut self) -> Result<u16, Error<E>> {
+    let param = [0u8; 1];
     let mut buf = [0u8; 2];
-    self.control.read_command(codes::GET_IRQ_STATUS, &mut buf)?;
-    let irq = u16::from_be_bytes(buf);
-    defmt::debug!("GetIrqStatus irq=0x{:04X}", irq);
+    self.control.read_command(codes::GET_IRQ_STATUS, &param, &mut buf)?;
+    // defmt::info!("GetIrqStatus raw=0x{:02X}{:02X}", buf[0], buf[1]);
+    let irq = u16::from_be_bytes([buf[0], buf[1]]);
+    // defmt::info!("GetIrqStatus irq=0x{:04X}", irq);
     Ok(irq)
   }
 
   /// Clear the specified IRQ flags.
   pub fn clear_irq_status(&mut self, mask: IrqMasks) -> Result<(), Error<E>> {
-    defmt::debug!("ClearIrqStatus mask=0x{:04X}", mask);
+    defmt::debug!("ClearIrqStatus mask=0x{:04X}", mask.bits());
     self.control.write_command(
       codes::CLEAR_IRQ_STATUS,
-      &[(mask as u16 >> 8) as u8, mask as u8],
+      &[(mask.bits() >> 8) as u8, mask.bits() as u8],
     )
   }
 
@@ -785,10 +815,11 @@ where
 
   /// Get the current packet type.
   pub fn get_packet_type(&mut self) -> Result<PacketType, Error<E>> {
+    let param = [0u8; 1];
     let mut buf = [0u8; 1];
     self
       .control
-      .read_command(codes::GET_PACKET_TYPE, &mut buf)?;
+      .read_command(codes::GET_PACKET_TYPE, &param, &mut buf)?;
     let pt = match buf[0] {
       0x00 => PacketType::Gfsk,
       0x01 => PacketType::LoRa,
@@ -870,7 +901,7 @@ where
   /// enabled and **set** when using normal IQ, to ensure correct receive
   /// behaviour.
   pub fn set_lora_packet_params(&mut self, params: LoRaPacketParams) -> Result<(), Error<E>> {
-    defmt::info!("SetPacketParams(LoRa) params={}", params);
+    // defmt::info!("SetPacketParams(LoRa) params={}", params);
     let data = [
       (params.preamble_length >> 8) as u8,
       params.preamble_length as u8,
@@ -954,8 +985,9 @@ where
 
   /// Get the instantaneous RSSI value (dBm).
   pub fn get_rssi_inst(&mut self) -> Result<i16, Error<E>> {
+    let param = [0u8; 1];
     let mut buf = [0u8; 1];
-    self.control.read_command(codes::GET_RSSI_INST, &mut buf)?;
+    self.control.read_command(codes::GET_RSSI_INST, &param, &mut buf)?;
     let rssi = -(buf[0] as i16) / 2;
     defmt::debug!("GetRssiInst rssi={}dBm", rssi);
     Ok(rssi)
@@ -963,10 +995,11 @@ where
 
   /// Get the RX buffer status (payload length and start pointer).
   pub fn get_rx_buffer_status(&mut self) -> Result<RxBufferStatus, Error<E>> {
+    let param = [0u8; 1];
     let mut buf = [0u8; 2];
     self
       .control
-      .read_command(codes::GET_RX_BUFFER_STATUS, &mut buf)?;
+      .read_command(codes::GET_RX_BUFFER_STATUS, &param, &mut buf)?;
     let status = RxBufferStatus {
       payload_length: buf[0],
       buffer_start_pointer: buf[1],
@@ -977,10 +1010,11 @@ where
 
   /// Get the LoRa packet status.
   pub fn get_lora_packet_status(&mut self) -> Result<LoRaPacketStatus, Error<E>> {
+    let param = [0u8; 1];
     let mut buf = [0u8; 3];
     self
       .control
-      .read_command(codes::GET_PACKET_STATUS, &mut buf)?;
+      .read_command(codes::GET_PACKET_STATUS, &param, &mut buf)?;
     let status = LoRaPacketStatus {
       rssi_pkt: -(buf[0] as i16) / 2,
       snr_pkt: (buf[1] as i8) / 4,
@@ -992,10 +1026,11 @@ where
 
   /// Get the device error flags.
   pub fn get_device_errors(&mut self) -> Result<u16, Error<E>> {
+    let param = [0u8; 1];
     let mut buf = [0u8; 2];
     self
       .control
-      .read_command(codes::GET_DEVICE_ERRORS, &mut buf)?;
+      .read_command(codes::GET_DEVICE_ERRORS, &param, &mut buf)?;
     let errors = u16::from_be_bytes(buf);
     defmt::debug!("GetDeviceErrors errors=0x{:04X}", errors);
     Ok(errors)
@@ -1067,6 +1102,97 @@ where
       defmt::warn!("Device not initialized, cannot send LoRa packet");
     }
     Ok(())
+  }
+
+  /// 进入 LoRa 接收模式。
+  ///
+  /// 配置 DIO1 为 `RxDone` IRQ、清除所有 pending 标志、切换 RF 通路为接收，
+  /// 然后以给定超时启动接收器。
+  ///
+  /// 调用此方法后，通过轮询 DIO1 引脚（高电平表示 `RxDone` 触发）或调用
+  /// [`get_irq_status`](Self::get_irq_status) 来检测数据包到达，
+  /// 再调用 [`recv_lora`](Self::recv_lora) 读取载荷。
+  ///
+  /// `timeout` 单位为 RTC 步进（15.625 µs/步）：
+  /// - `0x000000` = 单次接收（收到一个包或超时后退出）
+  /// - `0xFFFFFF` = 持续接收（永不超时，芯片保持在 RX 模式）
+  pub fn start_lora_rx(&mut self, timeout: u32) -> Result<(), Error<E>> {
+    if let Some(config) = &self.config {
+      let mut package = config.lora_packet;
+      package.payload_length = 255; // RX 时 payload length 由接收的包决定
+      let rx_irq_mask = IrqMasks::RxDone | IrqMasks::Timeout | IrqMasks::HeaderError | IrqMasks::CrcError;
+      let tx_base = config.tx_base_address;
+      let rx_base = config.rx_base_address;
+      // defmt::info!("Starting LoRa RX with packet params: {:?}", package);
+      self.set_lora_packet_params(package)?;
+      // 每次进入 RX 前重置 buffer 指针，防止多次接收后 buffer_start_pointer 累积漂移
+      self.set_buffer_base_address(tx_base, rx_base)?;
+      self.set_dio_irq_params(
+        rx_irq_mask,
+        rx_irq_mask,
+        IrqMasks::None,
+        IrqMasks::None,
+      )?;
+      self.clear_irq_status(IrqMasks::All)?;
+      self.control.switch_rx(0)?;
+      self.set_rx(timeout)?;
+      // defmt::info!("LoRa RX started, timeout=0x{:06X}", timeout);
+    } else {
+      defmt::warn!("Device not initialized, cannot start LoRa RX");
+    }
+    Ok(())
+  }
+
+  /// 读取已接收的 LoRa 数据包到 `buf`。
+  ///
+  /// 当 `RxDone` IRQ 已触发（DIO1 高电平或
+  /// [`get_irq_status`](Self::get_irq_status) 返回 `RxDone`）时调用。
+  ///
+  /// 返回值：
+  /// - `Ok(Some(len))` — 数据包已读入 `buf[..len]`
+  /// - `Ok(None)` — `RxDone` IRQ 尚未触发，暂无数据
+  ///
+  /// 在持续接收模式下（`timeout = 0xFFFFFF`），芯片每次收包后自动重新
+  /// 进入 RX，无需重新调用 [`start_lora_rx`](Self::start_lora_rx)。
+  /// 在单次接收模式下，每次成功读取后需重新调用 `start_lora_rx`。
+  pub fn recv_lora(&mut self, buf: &mut [u8]) -> Result<Option<usize>, Error<E>> {
+    let irq = self.get_irq_status()?;
+    self.clear_irq_status(IrqMasks::All)?;
+    // defmt::info!("IRQ status: 0b{:b}", irq);
+    if irq == IrqMasks::None.bits() {
+      warn!("No IRQ flags set, no packet received yet");
+      return Ok(None);
+    }
+
+    let rx_error_mask = IrqMasks::Timeout | IrqMasks::HeaderError | IrqMasks::CrcError;
+    if rx_error_mask.intersects(irq) {
+      // self.clear_irq_status(rx_error_mask)?;
+      warn!("RX error IRQ set: 0x{:04X}", irq & rx_error_mask.bits());
+      return Ok(None);
+    }
+
+    if !IrqMasks::RxDone.intersects(irq) {
+      // self.clear_irq_status(IrqMasks::PreambleDetected)?;
+      warn!("RxDone IRQ not set, ignoring irq=0x{:04X}", irq);
+      return Ok(None);
+    }
+
+    let packet_status = self.get_lora_packet_status()?;
+    // defmt::info!("LoRa packet status: {}", packet_status);
+
+    let buffer_status = self.get_rx_buffer_status()?;
+    if buffer_status.payload_length == 0 {
+      // self.clear_irq_status(IrqMasks::RxDone)?;
+      defmt::warn!("RxDone IRQ but payload_length=0, discarding");
+      return Ok(None);
+    }
+    let len = (buffer_status.payload_length as usize).min(buf.len());
+    self
+      .control
+      .read_buffer(buffer_status.buffer_start_pointer, &mut buf[..len])?;
+    // self.clear_irq_status(IrqMasks::All)?;
+    // defmt::info!("LoRa received {} bytes\n{:02X}", len, &buf[..len]);
+    Ok(Some(len))
   }
 
   /// Begin listening for a LoRa packet and return a *reader* closure.
@@ -1144,16 +1270,25 @@ where
   {
     let irq = self.get_irq_status()?;
 
-    if irq == IrqMasks::None as u16 {
+    if irq == IrqMasks::None.bits() {
       defmt::debug!("No IRQ flags set, no packet received yet");
       return Ok((None, Some(reader)));
     }
 
-    if irq & IrqMasks::PreambleDetected as u16 != 0 {
-      defmt::debug!("LoRa preamble detected");
+    let rx_error_mask = IrqMasks::Timeout | IrqMasks::HeaderError | IrqMasks::CrcError;
+    if rx_error_mask.intersects(irq) {
+      self.clear_irq_status(rx_error_mask)?;
+      defmt::warn!("RX error IRQ set: 0x{:04X}", irq & rx_error_mask.bits());
+      return Ok((None, Some(reader)));
     }
 
-    if irq & IrqMasks::RxDone as u16 != 0 {
+    if IrqMasks::PreambleDetected.intersects(irq) {
+      self.clear_irq_status(IrqMasks::PreambleDetected)?;
+      defmt::debug!("LoRa preamble detected");
+      return Ok((None, Some(reader)));
+    }
+
+    if IrqMasks::RxDone.intersects(irq) {
       let buffer_status = self.get_rx_buffer_status()?;
       defmt::debug!("RX buffer status: {}", buffer_status);
 
@@ -1164,6 +1299,7 @@ where
       }
 
       let size = reader(self, buffer_status.buffer_start_pointer)?;
+      self.clear_irq_status(IrqMasks::All)?;
       defmt::info!("LoRa packet received, reading from buffer...");
 
       Ok((Some(size), None))

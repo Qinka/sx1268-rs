@@ -1,6 +1,6 @@
 [package]
 name = "sx1268-rs"
-version = "0.1.0"
+version = "0.1.31"
 edition = "2024"
 authors = ["Johann Li <me@qinka.pro> @Qinka"]
 description = "A Rust driver for the SX1268 LoRa module."

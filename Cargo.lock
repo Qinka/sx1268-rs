@@ -226,7 +226,7 @@ dependencies = [
 
 [[package]]
 name = "sx1268-rs"
-version = "0.1.0"
+version = "0.1.31"
 dependencies = [
  "defmt 1.0.1",
  "embedded-hal 1.0.0",
