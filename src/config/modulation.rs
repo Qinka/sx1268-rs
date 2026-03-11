@@ -27,6 +27,12 @@
 //! when the symbol duration exceeds 16.38 ms (i.e. SF11/BW125 or
 //! SF12/BW125).
 
+#[cfg(feature = "std")]
+use std::fmt::{self, Display};
+
+#[cfg(feature = "no_std")]
+use defmt::Format;
+
 /// LoRa spreading factor (SF5–SF12).
 ///
 /// 扩频因子（Spreading Factor, SF）定义了单个符号中包含的 chirp 数量
@@ -35,7 +41,11 @@
 ///
 /// 不同 SF 之间具有正交性——同一频率上使用不同 SF 的信号互不干扰，
 /// 这是 LoRaWAN 网络容量管理的基础。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug, PartialEq, Eq))]
+#[cfg_attr(
+  feature = "no_std",
+  derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)
+)]
 pub enum LoRaSpreadingFactor {
   Sf5 = 0x05,
   Sf6 = 0x06,
@@ -70,7 +80,8 @@ impl LoRaSpreadingFactor {
 /// 下降（噪底升高）。
 ///
 /// SX1268 支持从 7.81 kHz 到 500 kHz 的多档带宽选择。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug, PartialEq, Eq))]
+#[cfg_attr(feature = "no_std", derive(Clone, Copy, Debug, PartialEq, Eq, Format))]
 pub enum LoRaBandwidth {
   /// 7.81 kHz
   Bw7 = 0x00,
@@ -120,7 +131,8 @@ impl LoRaBandwidth {
 ///
 /// 在显式报头模式下 CR 会被写入报头，接收端自动匹配；在隐式报头模式下
 /// 收发两端必须配置相同的 CR。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug, PartialEq, Eq))]
+#[cfg_attr(feature = "no_std", derive(Clone, Copy, Debug, PartialEq, Eq, Format))]
 pub enum LoRaCodingRate {
   /// 4/5
   Cr4_5 = 0x01,
@@ -156,7 +168,8 @@ impl LoRaCodingRate {
 ///
 /// 默认值：SF7 / BW125 / CR4_5 / LDRO off — 这是最常用的 LoRa 配置
 /// 之一，在数据速率和链路预算之间取得良好平衡。
-#[derive(Clone, Copy, Debug, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug))]
+#[cfg_attr(feature = "no_std", derive(Clone, Copy, Debug, Format))]
 pub struct LoRaModulationParams {
   pub(crate) sf: LoRaSpreadingFactor,
   pub(crate) bw: LoRaBandwidth,
@@ -211,5 +224,16 @@ impl LoRaModulationParams {
   pub fn with_low_data_rate_optimize(mut self, optimize: bool) -> Self {
     self.low_data_rate_optimize = optimize;
     self
+  }
+}
+
+#[cfg(feature = "std")]
+impl Display for LoRaModulationParams {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(
+      f,
+      "LoRaModulationParams {{ sf: {:?}, bw: {:?}, cr: {:?}, low_data_rate_optimize: {} }}",
+      self.sf, self.bw, self.cr, self.low_data_rate_optimize
+    )
   }
 }

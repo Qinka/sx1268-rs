@@ -17,12 +17,22 @@
 //! defines the [`PacketType`] selector and the LoRa-specific packet
 //! parameters ([`LoRaPacketParams`]).
 
+#[cfg(feature = "std")]
+use std::fmt::Display;
+
+#[cfg(feature = "no_std")]
+use defmt::Format;
+
 /// Packet type selector.
 ///
 /// The SX1268 can operate in either GFSK or LoRa mode. The packet type
 /// must be configured **before** setting modulation or packet parameters,
 /// because the interpretation of subsequent commands depends on it.
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Default, Clone, Copy, Debug, PartialEq, Eq))]
+#[cfg_attr(
+  feature = "no_std",
+  derive(Default, Clone, Copy, Debug, PartialEq, Eq, Format)
+)]
 pub enum PacketType {
   /// GFSK (Gaussian Frequency-Shift Keying) modulation.
   Gfsk = 0x00,
@@ -38,7 +48,8 @@ pub enum PacketType {
 /// - **Implicit** (fixed-length): no header is transmitted. Both TX and RX
 ///   must agree on payload length, coding rate and CRC setting in advance.
 ///   This saves a few bytes of airtime.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug, PartialEq, Eq))]
+#[cfg_attr(feature = "no_std", derive(Clone, Copy, Debug, PartialEq, Eq, Format))]
 pub enum LoRaHeaderType {
   /// Variable length packet (explicit header).
   Explicit = 0x00,
@@ -60,7 +71,8 @@ pub enum LoRaHeaderType {
 /// | `payload_length`  | Maximum (or fixed) payload size in bytes. |
 /// | `crc_on`          | Enable CRC-16 for payload integrity checking. |
 /// | `invert_iq`       | Invert I/Q signals — must be `true` on one side of a gateway↔node link to improve packet rejection of self-generated echoes. |
-#[derive(Clone, Copy, Debug, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug))]
+#[cfg_attr(feature = "no_std", derive(Clone, Copy, Debug, Format))]
 pub struct LoRaPacketParams {
   /// Preamble length in symbols.
   ///
@@ -131,5 +143,40 @@ impl LoRaPacketParams {
   pub fn with_invert_iq(mut self, invert_iq: bool) -> Self {
     self.invert_iq = invert_iq;
     self
+  }
+}
+
+#[cfg(feature = "std")]
+impl Display for PacketType {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      PacketType::Gfsk => write!(f, "Gfsk"),
+      PacketType::LoRa => write!(f, "LoRa"),
+    }
+  }
+}
+
+#[cfg(feature = "std")]
+impl Display for LoRaHeaderType {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      LoRaHeaderType::Explicit => write!(f, "Explicit"),
+      LoRaHeaderType::Implicit => write!(f, "Implicit"),
+    }
+  }
+}
+
+#[cfg(feature = "std")]
+impl Display for LoRaPacketParams {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(
+      f,
+      "LoRaPacketParams {{ preamble: {}, header: {:?}, payload: {}, crc: {}, iq: {} }}",
+      self.preamble_length,
+      self.header_type as u8,
+      self.payload_length,
+      self.crc_on,
+      self.invert_iq
+    )
   }
 }

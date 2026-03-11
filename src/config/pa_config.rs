@@ -32,12 +32,16 @@
 //! **Warning:** Setting `hpMax` above `0x07` may cause premature device
 //! ageing or permanent damage under extreme temperatures.
 
+#[cfg(feature = "no_std")]
+use defmt::Format;
+
 /// PA (Power Amplifier) configuration.
 ///
 /// Use the named constructors ([`best_22dbm`](Self::best_22dbm),
 /// [`best_20dbm`](Self::best_20dbm), etc.) to select a Semtech-recommended
 /// parameter combination for the desired maximum output power.
-#[derive(Clone, Copy, Debug, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug))]
+#[cfg_attr(feature = "no_std", derive(Clone, Copy, Debug, Format))]
 pub struct PaConfig {
   /// PA duty cycle (raw register value).
   ///
@@ -126,5 +130,19 @@ impl PaConfig {
       device_sel: 0x00,
       pa_lut: 0x01,
     }
+  }
+}
+
+#[cfg(feature = "std")]
+use std::fmt::Display;
+
+#[cfg(feature = "std")]
+impl Display for PaConfig {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(
+      f,
+      "PaConfig {{ duty_cycle: {}, hp_max: {}, device_sel: {}, pa_lut: {} }}",
+      self.pa_duty_cycle, self.hp_max, self.device_sel, self.pa_lut
+    )
   }
 }

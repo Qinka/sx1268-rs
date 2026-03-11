@@ -53,7 +53,7 @@
 //! radio.send_lora(b"Hello LoRa", 0).unwrap();
 //! ```
 
-#![no_std]
+#![cfg_attr(feature = "no_std", no_std)]
 
 pub mod config;
 pub mod control;

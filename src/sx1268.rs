@@ -17,7 +17,13 @@
 //! initialising the radio, configuring operational modes, transmitting
 //! and receiving LoRa packets, and reading diagnostic status.
 
-use defmt::warn;
+#[cfg(feature = "std")]
+use std::fmt::{self, Display};
+
+#[cfg(feature = "no_std")]
+use defmt::{debug, info, warn};
+#[cfg(feature = "std")]
+use tracing::{debug, info, warn};
 
 use crate::codes;
 use crate::config::*;
@@ -27,7 +33,8 @@ use crate::control::Control;
 ///
 /// Wraps low-level bus errors from the [`Control`] implementation as well
 /// as configuration and protocol-level errors detected by the driver.
-#[derive(Debug, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Debug))]
+#[cfg_attr(feature = "no_std", derive(Debug, defmt::Format))]
 pub enum Error<S> {
   /// A configuration-time error (e.g. out-of-range frequency).
   ConfigError(ConfigError),
@@ -48,11 +55,31 @@ impl<E> Error<E> {
   }
 }
 
+#[cfg(feature = "std")]
+impl<S> Display for Error<S> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Error::ConfigError(e) => write!(f, "Config error: {}", e),
+      Error::ControlError(_) => write!(f, "Control error"),
+      Error::InvalidStatus => write!(f, "Invalid status"),
+      Error::Timeout => write!(f, "Timeout"),
+      Error::InvalidParameter => write!(f, "Invalid parameter"),
+    }
+  }
+}
+
+#[cfg(feature = "std")]
+impl<E> std::error::Error for Error<E> where E: std::error::Error {}
+
 /// IRQ source bitmask values.
 ///
 /// Each constant corresponds to one or more bits in the 16-bit IRQ
 /// status register. Use [`All`](Self::All) to match / clear every flag.
-#[derive(Debug, defmt::Format, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "std", derive(Debug, Copy, Clone, PartialEq, Eq))]
+#[cfg_attr(
+  feature = "no_std",
+  derive(Debug, defmt::Format, Copy, Clone, PartialEq, Eq)
+)]
 pub struct IrqMasks(u16);
 
 #[allow(non_upper_case_globals)]
@@ -107,7 +134,11 @@ impl BitOrAssign for IrqMasks {
 }
 
 /// Chip operating mode, extracted from the status byte (bits 6:4).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Debug, Copy, Clone, PartialEq, Eq))]
+#[cfg_attr(
+  feature = "no_std",
+  derive(Debug, defmt::Format, Copy, Clone, PartialEq, Eq)
+)]
 pub enum ChipMode {
   /// Standby — RC oscillator.
   StbyRc = 0x02,
@@ -137,7 +168,11 @@ impl From<u8> for ChipMode {
 }
 
 /// Last command status, extracted from the status byte (bits 3:1).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug, PartialEq, Eq))]
+#[cfg_attr(
+  feature = "no_std",
+  derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)
+)]
 pub enum CommandStatus {
   /// Data is available to be read.
   DataAvailable = 0x02,
@@ -177,7 +212,8 @@ impl From<u8> for CommandStatus {
 /// ------|-----------|----------------|----
 /// Rsvd  | ChipMode  | CommandStatus  | Rsvd
 /// ```
-#[derive(Clone, Copy, Debug, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Debug, Copy, Clone))]
+#[cfg_attr(feature = "no_std", derive(Debug, defmt::Format, Copy, Clone))]
 pub struct Status {
   /// Current chip operating mode.
   pub chip_mode: ChipMode,
@@ -195,7 +231,8 @@ impl From<u8> for Status {
 }
 
 /// RX buffer status returned by `GetRxBufferStatus` (opcode `0x13`).
-#[derive(Clone, Copy, Debug, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug))]
+#[cfg_attr(feature = "no_std", derive(Clone, Copy, Debug, defmt::Format))]
 pub struct RxBufferStatus {
   /// Number of bytes in the last received payload.
   pub payload_length: u8,
@@ -204,7 +241,8 @@ pub struct RxBufferStatus {
 }
 
 /// LoRa packet status returned by `GetPacketStatus` (opcode `0x14`).
-#[derive(Clone, Copy, Debug, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug))]
+#[cfg_attr(feature = "no_std", derive(Clone, Copy, Debug, defmt::Format))]
 pub struct LoRaPacketStatus {
   /// Average RSSI over the last received packet (dBm).
   pub rssi_pkt: i16,
@@ -212,6 +250,28 @@ pub struct LoRaPacketStatus {
   pub snr_pkt: i8,
   /// RSSI of the LoRa signal (dBm).
   pub signal_rssi_pkt: i16,
+}
+
+#[cfg(feature = "std")]
+impl Display for RxBufferStatus {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(
+      f,
+      "RxBufferStatus {{ payload_length: {}, buffer_start_pointer: {} }}",
+      self.payload_length, self.buffer_start_pointer
+    )
+  }
+}
+
+#[cfg(feature = "std")]
+impl Display for LoRaPacketStatus {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(
+      f,
+      "LoRaPacketStatus {{ rssi_pkt: {}, snr_pkt: {}, signal_rssi_pkt: {} }}",
+      self.rssi_pkt, self.snr_pkt, self.signal_rssi_pkt
+    )
+  }
 }
 
 /// SX1268 LoRa transceiver driver.
@@ -226,115 +286,6 @@ pub struct Sx1268<C> {
   /// higher-level methods like [`send_lora`](Self::send_lora).
   config: Option<Sx1268Config>,
 }
-
-// impl<S: SpiDevice> Control for Sx1268<S> {
-//   type Status = Status;
-//   type Error = Error<S::Error>;
-
-//   // -----------------------------------------------------------------------
-//   // Low-level SPI helpers
-//   // -----------------------------------------------------------------------
-
-//   /// Write a command with parameters.
-//   fn write_command(&mut self, opcode: u8, params: &[u8]) -> Result<(), Error<S::Error>> {
-//     let cmd = [opcode];
-//     self
-//       .spi
-//       .transaction(&mut [Operation::Write(&cmd), Operation::Write(params)])
-//       .map_err(Error::Spi)?;
-//     defmt::trace!("SPI write cmd=0x{:02X} params={:?}", opcode, params);
-//     Ok(())
-//   }
-
-//   /// Read a command response.
-//   /// The SX1268 protocol sends a status byte after the opcode + NOP, then
-//   /// returns the response data.
-//   fn read_command(&mut self, opcode: u8, response: &mut [u8]) -> Result<Status, Error<S::Error>> {
-//     let cmd = [opcode, 0x00]; // opcode + NOP
-//     let mut status_buf = [0u8; 1];
-//     self
-//       .spi
-//       .transaction(&mut [
-//         Operation::Write(&cmd),
-//         Operation::Read(&mut status_buf),
-//         Operation::Read(response),
-//       ])
-//       .map_err(Error::Spi)?;
-//     let status = Status::from(status_buf[0]);
-//     defmt::trace!(
-//       "SPI read cmd=0x{:02X} status={} resp={:?}",
-//       opcode,
-//       status,
-//       response
-//     );
-//     Ok(status)
-//   }
-
-//   /// Write to registers starting at the given address.
-//   fn write_register(&mut self, address: u16, data: &[u8]) -> Result<(), Error<S::Error>> {
-//     let header = [opcode::WRITE_REGISTER, (address >> 8) as u8, address as u8];
-//     self
-//       .spi
-//       .transaction(&mut [Operation::Write(&header), Operation::Write(data)])
-//       .map_err(Error::Spi)?;
-//     defmt::trace!("WriteRegister addr=0x{:04X} data={:?}", address, data);
-//     Ok(())
-//   }
-
-//   /// Read from registers starting at the given address.
-//   fn read_register(&mut self, address: u16, data: &mut [u8]) -> Result<Status, Error<S::Error>> {
-//     let header = [
-//       opcode::READ_REGISTER,
-//       (address >> 8) as u8,
-//       address as u8,
-//       0x00, // NOP (status)
-//     ];
-//     self
-//       .spi
-//       .transaction(&mut [Operation::Write(&header), Operation::Read(data)])
-//       .map_err(Error::Spi)?;
-//     defmt::trace!("ReadRegister addr=0x{:04X} data={:?}", address, data);
-//     // Status not reliably returned from read_register, return default
-//     Ok(Status::from(0))
-//   }
-
-//   /// Write data to the TX buffer at the given offset.
-//   fn write_buffer(&mut self, offset: u8, data: &[u8]) -> Result<(), Error<S::Error>> {
-//     let header = [opcode::WRITE_BUFFER, offset];
-//     self
-//       .spi
-//       .transaction(&mut [Operation::Write(&header), Operation::Write(data)])
-//       .map_err(Error::Spi)?;
-//     defmt::trace!("WriteBuffer offset={} len={}", offset, data.len());
-//     Ok(())
-//   }
-
-//   /// Read data from the RX buffer at the given offset.
-//   fn read_buffer(&mut self, offset: u8, data: &mut [u8]) -> Result<(), Error<S::Error>> {
-//     let header = [opcode::READ_BUFFER, offset, 0x00]; // offset + NOP (status)
-//     self
-//       .spi
-//       .transaction(&mut [Operation::Write(&header), Operation::Read(data)])
-//       .map_err(Error::Spi)?;
-//     defmt::trace!("ReadBuffer offset={} len={}", offset, data.len());
-//     Ok(())
-//   }
-
-//   /// Get the device status.
-//   fn get_status(&mut self) -> Result<Status, Error<S::Error>> {
-//     let mut status_byte = [0u8; 1];
-//     self
-//       .spi
-//       .transaction(&mut [
-//         Operation::Write(&[opcode::GET_STATUS]),
-//         Operation::Read(&mut status_byte),
-//       ])
-//       .map_err(Error::Spi)?;
-//     let status = Status::from(status_byte[0]);
-//     defmt::debug!("GetStatus status={}", status);
-//     Ok(status)
-//   }
-// }
 
 impl<C, E> Sx1268<C>
 where
@@ -395,31 +346,31 @@ where
   /// [`send_lora`](Self::send_lora) or
   /// [`wait_lora_packet`](Self::wait_lora_packet).
   pub fn init(&mut self, config: Sx1268Config) -> Result<(), Error<E>> {
-    defmt::info!("Initializing SX1268");
-    defmt::debug!("Config={:?}", config);
+    info!("Initializing SX1268");
+    debug!("Config={:?}", config);
 
     // 硬件复位
     self.control.reset()?;
-    defmt::info!("Hardware reset complete ...");
+    info!("Hardware reset complete ...");
 
     // 唤醒设备
     self.control.wakeup()?;
-    defmt::info!("Device wakeup complete ...");
+    info!("Device wakeup complete ...");
 
     // 进入 standby 模式，使用内部 RC 作为时钟源，等待后续配置
     self.set_standby(StandbyConfig::StbyRc)?;
-    defmt::info!("Device reset complete");
+    info!("Device reset complete");
 
     // TODO: 保留寄存器设置
     // sx126x_init_retention_list( &context_e22 );
 
     // 内部电源模式 (DCDC功耗更小)
     self.set_regulator_mode(config.regulator_mode)?;
-    defmt::info!("Regulator mode set to {}", config.regulator_mode);
+    info!("Regulator mode set to {}", config.regulator_mode);
 
     // DIO2切换射频开关
     self.set_dio2_as_rf_switch_ctrl(config.dio2_as_rf_switch)?;
-    defmt::info!(
+    info!(
       "DIO2 as RF switch control {}",
       if config.dio2_as_rf_switch {
         "enabled"
@@ -430,66 +381,46 @@ where
 
     if let Some(tcxo) = config.tcxo {
       self.set_dio3_as_tcxo_ctrl(tcxo.voltage, tcxo.timeout)?;
-      defmt::info!("TCXO configured on DIO3");
+      info!("TCXO configured on DIO3");
     }
 
     // 修正内部状态
     self.calibrate(config.calibration)?;
-    defmt::info!("Calibration complete");
+    info!("Calibration complete");
 
     self.set_packet_type(config.package_type)?;
-    defmt::info!("Packet type set to {}", config.package_type);
+    info!("Packet type set to {}", config.package_type);
 
     self.set_rf_frequency(config.frequency_hz)?;
-    defmt::info!("RF frequency set to {} Hz", config.frequency_hz);
+    info!("RF frequency set to {} Hz", config.frequency_hz);
 
     self.set_pa_config(config.pa_config)?;
-    defmt::info!("PA config set to {}", config.pa_config);
+    info!("PA config set to {}", config.pa_config);
 
     self.set_tx_params(config.tx_power, config.ramp_time)?;
-    defmt::info!(
+    info!(
       "TX params set to power={}dBm ramp={}",
-      config.tx_power,
-      config.ramp_time
+      config.tx_power, config.ramp_time
     );
 
     self.set_rx_tx_fallback_mode(config.fallback_mode)?;
-    defmt::info!("RX/TX fallback mode set to {}", config.fallback_mode);
+    info!("RX/TX fallback mode set to {}", config.fallback_mode);
 
     // 关闭增强接收 (开启会增加接收灵敏度，但功耗会增加)
     self.set_rx_gain(false)?;
     // TODO: 改成配置
 
     self.set_lora_modulation_params(config.lora_modulation)?;
-    defmt::info!("LoRa modulation params set to {:?}", config.lora_modulation);
+    info!("LoRa modulation params set to {:?}", config.lora_modulation);
 
     self.set_lora_packet_params(config.lora_packet)?;
-    defmt::info!("LoRa packet params set to {:?}", config.lora_packet);
+    info!("LoRa packet params set to {:?}", config.lora_packet);
 
     self.set_lora_sync_word(config.lora_sync_word)?;
-    defmt::info!("LoRa sync word set to 0x{:02X}", config.lora_sync_word);
-
-    // other
-
-    // self.set_dio2_as_rf_switch_ctrl(config.dio2_as_rf_switch)?;
-    // defmt::info!(
-    //   "DIO2 as RF switch control {}",
-    //   if config.dio2_as_rf_switch {
-    //     "enabled"
-    //   } else {
-    //     "disabled"
-    //   }
-    // );
-
-    // self.set_buffer_base_address(config.tx_base_address, config.rx_base_address)?;
-    // defmt::info!(
-    //   "Buffer base addresses set to TX=0x{:02X} RX=0x{:02X}",
-    //   config.tx_base_address,
-    //   config.rx_base_address
-    // );
+    info!("LoRa sync word set to 0x{:02X}", config.lora_sync_word);
 
     self.config = Some(config);
-    defmt::info!("SX1268 initialization complete");
+    info!("SX1268 initialization complete");
 
     Ok(())
   }
@@ -500,7 +431,7 @@ where
 
   /// Set the device into sleep mode.
   pub fn set_sleep(&mut self, config: SleepConfig) -> Result<(), Error<E>> {
-    defmt::info!("SetSleep config={}", config);
+    info!("SetSleep config={}", config);
     self
       .control
       .write_command(codes::SET_SLEEP, &[config.to_byte()])
@@ -508,7 +439,7 @@ where
 
   /// Set the device into standby mode.
   pub fn set_standby(&mut self, config: StandbyConfig) -> Result<(), Error<E>> {
-    defmt::info!("SetStandby config={}", config);
+    info!("SetStandby config={}", config);
     self
       .control
       .write_command(codes::SET_STANDBY, &[config as u8])
@@ -516,7 +447,7 @@ where
 
   /// Set the device into frequency synthesis mode.
   pub fn set_fs(&mut self) -> Result<(), Error<E>> {
-    defmt::info!("SetFs");
+    info!("SetFs");
     self.control.write_command(codes::SET_FS, &[])
   }
 
@@ -535,7 +466,7 @@ where
   ///
   /// `timeout` is in units of 15.625 µs (0 = no timeout, TX single mode).
   pub fn set_tx(&mut self, timeout: u32) -> Result<(), Error<E>> {
-    defmt::info!("SetTx timeout={}", timeout);
+    info!("SetTx timeout={}", timeout);
     let params = [
       ((timeout >> 16) & 0xFF) as u8,
       ((timeout >> 8) & 0xFF) as u8,
@@ -550,7 +481,6 @@ where
   /// - 0x000000 = no timeout (RX single mode)
   /// - 0xFFFFFF = continuous RX mode
   pub fn set_rx(&mut self, timeout: u32) -> Result<(), Error<E>> {
-    // defmt::info!("SetRx timeout=0x{:06X}", timeout);
     let params = [
       ((timeout >> 16) & 0xFF) as u8,
       ((timeout >> 8) & 0xFF) as u8,
@@ -568,10 +498,9 @@ where
 
   /// Set the device into RX duty cycle mode.
   pub fn set_rx_duty_cycle(&mut self, rx_period: u32, sleep_period: u32) -> Result<(), Error<E>> {
-    defmt::info!(
+    info!(
       "SetRxDutyCycle rx_period=0x{:06X} sleep_period=0x{:06X}",
-      rx_period,
-      sleep_period
+      rx_period, sleep_period
     );
     let params = [
       ((rx_period >> 16) & 0xFF) as u8,
@@ -593,7 +522,7 @@ where
   ///   which increases receive sensitivity at the cost of higher current
   ///   consumption.
   pub fn set_rx_gain(&mut self, gain: bool) -> Result<(), Error<E>> {
-    defmt::info!("SetRxGain gain={}", gain);
+    info!("SetRxGain gain={}", gain);
     let code = if gain { 0x96 } else { 0x94 };
 
     self.control.write_register(codes::REG_RX_GAIN, &[code])
@@ -601,13 +530,13 @@ where
 
   /// Set the device into CAD (Channel Activity Detection) mode.
   pub fn set_cad(&mut self) -> Result<(), Error<E>> {
-    defmt::info!("SetCad");
+    info!("SetCad");
     self.control.write_command(codes::SET_CAD, &[])
   }
 
   /// Set the device to transmit a continuous wave (for testing).
   pub fn set_tx_continuous_wave(&mut self) -> Result<(), Error<E>> {
-    defmt::info!("SetTxContinuousWave");
+    info!("SetTxContinuousWave");
     self
       .control
       .write_command(codes::SET_TX_CONTINUOUS_WAVE, &[])
@@ -615,7 +544,7 @@ where
 
   /// Set the device to transmit an infinite preamble (for testing).
   pub fn set_tx_infinite_preamble(&mut self) -> Result<(), Error<E>> {
-    defmt::info!("SetTxInfinitePreamble");
+    info!("SetTxInfinitePreamble");
     self
       .control
       .write_command(codes::SET_TX_INFINITE_PREAMBLE, &[])
@@ -627,7 +556,7 @@ where
 
   /// Set the regulator mode (LDO only or DC-DC+LDO).
   pub fn set_regulator_mode(&mut self, mode: RegulatorMode) -> Result<(), Error<E>> {
-    defmt::info!("SetRegulatorMode mode={}", mode);
+    info!("SetRegulatorMode mode={}", mode);
     self
       .control
       .write_command(codes::SET_REGULATOR_MODE, &[mode as u8])
@@ -635,13 +564,13 @@ where
 
   /// Run calibration of the specified blocks.
   pub fn calibrate(&mut self, params: CalibrationParams) -> Result<(), Error<E>> {
-    defmt::info!("Calibrate params=0x{:02X}", params.0);
+    info!("Calibrate params=0x{:02X}", params.0);
     self.control.write_command(codes::CALIBRATE, &[params.0])
   }
 
   /// Calibrate the image rejection for a given frequency range.
   pub fn calibrate_image(&mut self, freq1: u8, freq2: u8) -> Result<(), Error<E>> {
-    defmt::info!("CalibrateImage freq1=0x{:02X} freq2=0x{:02X}", freq1, freq2);
+    info!("CalibrateImage freq1=0x{:02X} freq2=0x{:02X}", freq1, freq2);
     self
       .control
       .write_command(codes::CALIBRATE_IMAGE, &[freq1, freq2])
@@ -649,7 +578,7 @@ where
 
   /// Configure the Power Amplifier.
   pub fn set_pa_config(&mut self, config: PaConfig) -> Result<(), Error<E>> {
-    defmt::info!("SetPaConfig config={}", config);
+    info!("SetPaConfig config={}", config);
     self.control.write_command(
       codes::SET_PA_CONFIG,
       &[
@@ -663,7 +592,7 @@ where
 
   /// Set the fallback mode after TX or RX operation completes.
   pub fn set_rx_tx_fallback_mode(&mut self, mode: FallbackMode) -> Result<(), Error<E>> {
-    defmt::info!("SetRxTxFallbackMode mode={}", mode);
+    info!("SetRxTxFallbackMode mode={}", mode);
     self
       .control
       .write_command(codes::SET_RX_TX_FALLBACK_MODE, &[mode as u8])
@@ -681,13 +610,6 @@ where
     dio2_mask: IrqMasks,
     dio3_mask: IrqMasks,
   ) -> Result<(), Error<E>> {
-    // defmt::info!(
-    //   "SetDioIrqParams irq=0x{:04X} dio1=0x{:04X} dio2=0x{:04X} dio3=0x{:04X}",
-    //   irq_mask.bits(),
-    //   dio1_mask.bits(),
-    //   dio2_mask.bits(),
-    //   dio3_mask.bits()
-    // );
     let params = [
       (irq_mask.bits() >> 8) as u8,
       irq_mask.bits() as u8,
@@ -710,15 +632,13 @@ where
     self
       .control
       .read_command(codes::GET_IRQ_STATUS, &param, &mut buf)?;
-    // defmt::info!("GetIrqStatus raw=0x{:02X}{:02X}", buf[0], buf[1]);
     let irq = u16::from_be_bytes([buf[0], buf[1]]);
-    // defmt::info!("GetIrqStatus irq=0x{:04X}", irq);
     Ok(irq)
   }
 
   /// Clear the specified IRQ flags.
   pub fn clear_irq_status(&mut self, mask: IrqMasks) -> Result<(), Error<E>> {
-    defmt::debug!("ClearIrqStatus mask=0x{:04X}", mask.bits());
+    debug!("ClearIrqStatus mask=0x{:04X}", mask.bits());
     self.control.write_command(
       codes::CLEAR_IRQ_STATUS,
       &[(mask.bits() >> 8) as u8, mask.bits() as u8],
@@ -727,7 +647,7 @@ where
 
   /// Set DIO2 as RF switch control.
   pub fn set_dio2_as_rf_switch_ctrl(&mut self, enable: bool) -> Result<(), Error<E>> {
-    defmt::info!("SetDIO2AsRfSwitchCtrl enable={}", enable);
+    info!("SetDIO2AsRfSwitchCtrl enable={}", enable);
     self
       .control
       .write_command(codes::SET_DIO2_AS_RF_SWITCH_CTRL, &[enable as u8])
@@ -741,10 +661,9 @@ where
     voltage: TcxoVoltage,
     timeout: u32,
   ) -> Result<(), Error<E>> {
-    defmt::info!(
+    info!(
       "SetDIO3AsTCXOCtrl voltage={} timeout=0x{:06X}",
-      voltage,
-      timeout
+      voltage, timeout
     );
     let params = [
       voltage as u8,
@@ -793,10 +712,9 @@ where
   /// The SX1268 uses a 32-bit frequency word: `freq_word = freq_hz * 2^25 / 32_000_000`.
   pub fn set_rf_frequency(&mut self, frequency_hz: u32) -> Result<(), Error<E>> {
     let freq_reg = Self::convert_freq_in_hz_to_pll_step(frequency_hz);
-    defmt::info!(
+    info!(
       "SetRfFrequency freq={}Hz reg=0x{:08X}",
-      frequency_hz,
-      freq_reg
+      frequency_hz, freq_reg
     );
     let params = [
       ((freq_reg >> 24) & 0xFF) as u8,
@@ -809,7 +727,7 @@ where
 
   /// Set the packet type (GFSK or LoRa).
   pub fn set_packet_type(&mut self, packet_type: PacketType) -> Result<(), Error<E>> {
-    defmt::info!("SetPacketType type={}", packet_type);
+    info!("SetPacketType type={}", packet_type);
     self
       .control
       .write_command(codes::SET_PACKET_TYPE, &[packet_type as u8])
@@ -827,7 +745,7 @@ where
       0x01 => PacketType::LoRa,
       _ => return Err(Error::InvalidStatus),
     };
-    defmt::debug!("GetPacketType type={}", pt);
+    debug!("GetPacketType type={}", pt);
     Ok(pt)
   }
 
@@ -835,7 +753,7 @@ where
   ///
   /// `power` is in dBm (range: -9 to +22 for SX1268).
   pub fn set_tx_params(&mut self, power: i8, ramp_time: RampTime) -> Result<(), Error<E>> {
-    defmt::info!("SetTxParams power={}dBm ramp={}", power, ramp_time);
+    info!("SetTxParams power={}dBm ramp={}", power, ramp_time);
     self
       .control
       .write_command(codes::SET_TX_PARAMS, &[power as u8, ramp_time as u8])
@@ -846,7 +764,7 @@ where
     &mut self,
     params: LoRaModulationParams,
   ) -> Result<(), Error<E>> {
-    defmt::info!("SetModulationParams(LoRa) params={}", params);
+    info!("SetModulationParams(LoRa) params={}", params);
     let data = [
       params.sf as u8,
       params.bw as u8,
@@ -903,7 +821,6 @@ where
   /// enabled and **set** when using normal IQ, to ensure correct receive
   /// behaviour.
   pub fn set_lora_packet_params(&mut self, params: LoRaPacketParams) -> Result<(), Error<E>> {
-    // defmt::info!("SetPacketParams(LoRa) params={}", params);
     let data = [
       (params.preamble_length >> 8) as u8,
       params.preamble_length as u8,
@@ -942,13 +859,9 @@ where
     exit_mode: CadExitMode,
     timeout: u32,
   ) -> Result<(), Error<E>> {
-    defmt::info!(
+    info!(
       "SetCadParams symbols={} peak={} min={} exit={} timeout=0x{:06X}",
-      num_symbols,
-      det_peak,
-      det_min,
-      exit_mode,
-      timeout
+      num_symbols, det_peak, det_min, exit_mode, timeout
     );
     let params = [
       num_symbols as u8,
@@ -964,10 +877,9 @@ where
 
   /// Set the TX and RX buffer base addresses.
   pub fn set_buffer_base_address(&mut self, tx_base: u8, rx_base: u8) -> Result<(), Error<E>> {
-    defmt::debug!(
+    debug!(
       "SetBufferBaseAddress tx=0x{:02X} rx=0x{:02X}",
-      tx_base,
-      rx_base
+      tx_base, rx_base
     );
     self
       .control
@@ -993,7 +905,7 @@ where
       .control
       .read_command(codes::GET_RSSI_INST, &param, &mut buf)?;
     let rssi = -(buf[0] as i16) / 2;
-    defmt::debug!("GetRssiInst rssi={}dBm", rssi);
+    debug!("GetRssiInst rssi={}dBm", rssi);
     Ok(rssi)
   }
 
@@ -1008,7 +920,7 @@ where
       payload_length: buf[0],
       buffer_start_pointer: buf[1],
     };
-    defmt::debug!("GetRxBufferStatus status={}", status);
+    debug!("GetRxBufferStatus status={}", status);
     Ok(status)
   }
 
@@ -1024,7 +936,7 @@ where
       snr_pkt: (buf[1] as i8) / 4,
       signal_rssi_pkt: -(buf[2] as i16) / 2,
     };
-    defmt::debug!("GetLoRaPacketStatus status={}", status);
+    debug!("GetLoRaPacketStatus status={}", status);
     Ok(status)
   }
 
@@ -1036,13 +948,13 @@ where
       .control
       .read_command(codes::GET_DEVICE_ERRORS, &param, &mut buf)?;
     let errors = u16::from_be_bytes(buf);
-    defmt::debug!("GetDeviceErrors errors=0x{:04X}", errors);
+    debug!("GetDeviceErrors errors=0x{:04X}", errors);
     Ok(errors)
   }
 
   /// Clear all device errors.
   pub fn clear_device_errors(&mut self) -> Result<(), Error<E>> {
-    defmt::debug!("ClearDeviceErrors");
+    debug!("ClearDeviceErrors");
     self
       .control
       .write_command(codes::CLEAR_DEVICE_ERRORS, &[0x00, 0x00])
@@ -1056,12 +968,12 @@ where
   ///
   /// Common values: `0x3444` for public network, `0x1424` for private network.
   pub fn set_lora_sync_word(&mut self, sync_word: u16) -> Result<(), Error<E>> {
-    defmt::info!("SetLoRaSyncWord sync_word=0x{:04X}", sync_word);
+    info!("SetLoRaSyncWord sync_word=0x{:04X}", sync_word);
 
     self
       .control
       .write_register(codes::REG_LORA_SYNC_WORD_MSB, &sync_word.to_be_bytes())?;
-    defmt::info!("Current LoRa sync word register value 3",);
+    info!("Current LoRa sync word register value 3",);
     Ok(())
   }
 
@@ -1086,7 +998,7 @@ where
   /// Returns `Ok(())` immediately without sending anything if
   /// [`init`](Self::init) has not been called yet.
   pub fn send_lora(&mut self, data: &[u8], timeout: u32) -> Result<(), Error<E>> {
-    defmt::info!("SendLoRa len={} timeout={}", data.len(), timeout);
+    info!("SendLoRa len={} timeout={}", data.len(), timeout);
     if let Some(config) = &self.config {
       let mut package = config.lora_packet;
       package.payload_length = data.len().min(255) as u8;
@@ -1103,7 +1015,7 @@ where
       self.set_tx(timeout)?;
       // self.control.switch_rx(0)?;
     } else {
-      defmt::warn!("Device not initialized, cannot send LoRa packet");
+      warn!("Device not initialized, cannot send LoRa packet");
     }
     Ok(())
   }
@@ -1128,7 +1040,6 @@ where
         IrqMasks::RxDone | IrqMasks::Timeout | IrqMasks::HeaderError | IrqMasks::CrcError;
       let tx_base = config.tx_base_address;
       let rx_base = config.rx_base_address;
-      // defmt::info!("Starting LoRa RX with packet params: {:?}", package);
       self.set_lora_packet_params(package)?;
       // 每次进入 RX 前重置 buffer 指针，防止多次接收后 buffer_start_pointer 累积漂移
       self.set_buffer_base_address(tx_base, rx_base)?;
@@ -1136,9 +1047,8 @@ where
       self.clear_irq_status(IrqMasks::All)?;
       self.control.switch_rx(0)?;
       self.set_rx(timeout)?;
-      // defmt::info!("LoRa RX started, timeout=0x{:06X}", timeout);
     } else {
-      defmt::warn!("Device not initialized, cannot start LoRa RX");
+      warn!("Device not initialized, cannot start LoRa RX");
     }
     Ok(())
   }
@@ -1158,7 +1068,7 @@ where
   pub fn recv_lora(&mut self, buf: &mut [u8]) -> Result<Option<usize>, Error<E>> {
     let irq = self.get_irq_status()?;
     self.clear_irq_status(IrqMasks::All)?;
-    // defmt::info!("IRQ status: 0b{:b}", irq);
+    // info!("IRQ status: 0b{:b}", irq);
     if irq == IrqMasks::None.bits() {
       warn!("No IRQ flags set, no packet received yet");
       return Ok(None);
@@ -1178,12 +1088,12 @@ where
     }
 
     let _packet_status = self.get_lora_packet_status()?;
-    // defmt::info!("LoRa packet status: {}", packet_status);
+    // info!("LoRa packet status: {}", packet_status);
 
     let buffer_status = self.get_rx_buffer_status()?;
     if buffer_status.payload_length == 0 {
       // self.clear_irq_status(IrqMasks::RxDone)?;
-      defmt::warn!("RxDone IRQ but payload_length=0, discarding");
+      warn!("RxDone IRQ but payload_length=0, discarding");
       return Ok(None);
     }
     let len = (buffer_status.payload_length as usize).min(buf.len());
@@ -1191,7 +1101,7 @@ where
       .control
       .read_buffer(buffer_status.buffer_start_pointer, &mut buf[..len])?;
     // self.clear_irq_status(IrqMasks::All)?;
-    // defmt::info!("LoRa received {} bytes\n{:02X}", len, &buf[..len]);
+    // info!("LoRa received {} bytes\n{:02X}", len, &buf[..len]);
     Ok(Some(len))
   }
 
@@ -1222,7 +1132,7 @@ where
     if let Some(config) = &self.config {
       let mut package = config.lora_packet;
       package.payload_length = buf.len().min(255) as u8;
-      defmt::debug!("payload_length={}", package.payload_length);
+      debug!("payload_length={}", package.payload_length);
       self.set_lora_packet_params(package)?;
       self.set_dio_irq_params(
         IrqMasks::RxDone,
@@ -1233,14 +1143,14 @@ where
       self.clear_irq_status(IrqMasks::All)?;
       self.control.switch_rx(0)?;
       self.set_rx(timeout)?;
-      defmt::info!("Waiting for LoRa packet...");
+      info!("Waiting for LoRa packet...");
     }
 
     let reader = move |driver: &mut Self, offset: u8| {
-      defmt::debug!("Reading LoRa packet from buffer with offset={}", offset);
+      debug!("Reading LoRa packet from buffer with offset={}", offset);
       driver.control.read_buffer(offset, buf)?;
       let size = buf.len().min(255);
-      defmt::info!("Read {} bytes from RX buffer", size);
+      info!("Read {} bytes from RX buffer", size);
       Ok(size)
     };
 
@@ -1271,40 +1181,40 @@ where
     let irq = self.get_irq_status()?;
 
     if irq == IrqMasks::None.bits() {
-      defmt::debug!("No IRQ flags set, no packet received yet");
+      debug!("No IRQ flags set, no packet received yet");
       return Ok((None, Some(reader)));
     }
 
     let rx_error_mask = IrqMasks::Timeout | IrqMasks::HeaderError | IrqMasks::CrcError;
     if rx_error_mask.intersects(irq) {
       self.clear_irq_status(rx_error_mask)?;
-      defmt::warn!("RX error IRQ set: 0x{:04X}", irq & rx_error_mask.bits());
+      warn!("RX error IRQ set: 0x{:04X}", irq & rx_error_mask.bits());
       return Ok((None, Some(reader)));
     }
 
     if IrqMasks::PreambleDetected.intersects(irq) {
       self.clear_irq_status(IrqMasks::PreambleDetected)?;
-      defmt::debug!("LoRa preamble detected");
+      debug!("LoRa preamble detected");
       return Ok((None, Some(reader)));
     }
 
     if IrqMasks::RxDone.intersects(irq) {
       let buffer_status = self.get_rx_buffer_status()?;
-      defmt::debug!("RX buffer status: {}", buffer_status);
+      debug!("RX buffer status: {}", buffer_status);
 
       if buffer_status.payload_length == 0 {
-        defmt::warn!("RX done IRQ but payload length is 0, clearing IRQ and returning");
+        warn!("RX done IRQ but payload length is 0, clearing IRQ and returning");
         self.clear_irq_status(IrqMasks::RxDone)?;
         return Ok((None, None));
       }
 
       let size = reader(self, buffer_status.buffer_start_pointer)?;
       self.clear_irq_status(IrqMasks::All)?;
-      defmt::info!("LoRa packet received, reading from buffer...");
+      info!("LoRa packet received, reading from buffer...");
 
       Ok((Some(size), None))
     } else {
-      defmt::debug!("No LoRa packet received yet (IRQ=0x{:04X})", irq);
+      debug!("No LoRa packet received yet (IRQ=0x{:04X})", irq);
       Ok((None, Some(reader)))
     }
   }

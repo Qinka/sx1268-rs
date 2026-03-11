@@ -32,6 +32,9 @@ mod pa_config;
 mod package;
 mod types;
 
+#[cfg(feature = "std")]
+use std::fmt::{self, Display};
+
 pub use modulation::{LoRaBandwidth, LoRaCodingRate, LoRaModulationParams, LoRaSpreadingFactor};
 pub use pa_config::PaConfig;
 pub use package::{LoRaHeaderType, LoRaPacketParams, PacketType};
@@ -49,7 +52,8 @@ const FREQ_DEFAULT_HZ: u32 = 433_000_000;
 
 /// Error returned when an [`Sx1268Config`] builder method receives an
 /// out-of-range or otherwise invalid value.
-#[derive(Debug, Clone, Copy, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Debug, Clone, Copy))]
+#[cfg_attr(feature = "no_std", derive(Debug, Clone, Copy, defmt::Format))]
 pub enum ConfigError {
   /// The requested frequency is outside the supported range
   /// [`FREQ_MIN_HZ`]–[`FREQ_MAX_HZ`].
@@ -62,6 +66,24 @@ pub enum ConfigError {
     min: u32,
   },
 }
+
+#[cfg(feature = "std")]
+impl Display for ConfigError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      ConfigError::InvalidFrequency { freq, min, max } => {
+        write!(
+          f,
+          "Invalid frequency {} Hz, must be between {} and {} Hz",
+          freq, min, max
+        )
+      }
+    }
+  }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for ConfigError {}
 
 /// Aggregated configuration for the SX1268 peripheral.
 ///
@@ -86,7 +108,8 @@ pub enum ConfigError {
 /// | Calibration     | all blocks              |
 ///
 /// Use the `with_*` builder methods to customise individual parameters.
-#[derive(Debug, Clone, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Debug, Clone))]
+#[cfg_attr(feature = "no_std", derive(Debug, Clone, defmt::Format))]
 pub struct Sx1268Config {
   /// Packet type (GFSK or LoRa).
   pub(super) package_type: PacketType,

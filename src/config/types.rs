@@ -13,11 +13,18 @@
 
 //! Miscellaneous configuration types shared across the SX1268 driver.
 
+#[cfg(feature = "std")]
+use std::fmt::Display;
+
+#[cfg(feature = "no_std")]
+use defmt::Format;
+
 /// PA ramp time — the rise-time of the power amplifier output.
 ///
 /// 较长的 ramp time 可有效抑制频谱旁瓣（邻道干扰），但会增加
 /// 从 PA 使能到信号稳定的延迟。根据目标频段法规和系统时序需求选择。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug, PartialEq, Eq))]
+#[cfg_attr(feature = "no_std", derive(Clone, Copy, Debug, PartialEq, Eq, Format))]
 pub enum RampTime {
   /// 10 µs
   Ramp10Us = 0x00,
@@ -42,7 +49,8 @@ pub enum RampTime {
 /// - **Ldo** — 仅使用 LDO 调节。电源纹波最小但效率较低。
 /// - **DcDcLdo** — DC-DC 为主、LDO 为辅。效率更高，推荐在高功率
 ///   输出场景下使用（需要外部电感）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug, PartialEq, Eq))]
+#[cfg_attr(feature = "no_std", derive(Clone, Copy, Debug, PartialEq, Eq, Format))]
 pub enum RegulatorMode {
   /// Only LDO.
   Ldo = 0x00,
@@ -53,7 +61,8 @@ pub enum RegulatorMode {
 /// Fallback mode after TX/RX.
 ///
 /// 设备在发送或接收完成后自动进入的状态，影响功耗和下一次操作的启动延迟。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug, PartialEq, Eq))]
+#[cfg_attr(feature = "no_std", derive(Clone, Copy, Debug, PartialEq, Eq, Format))]
 pub enum FallbackMode {
   /// Standby with internal RC oscillator (lowest power, slower wakeup).
   StbyRc = 0x20,
@@ -67,7 +76,8 @@ pub enum FallbackMode {
 ///
 /// 当使用 TCXO 作为参考时钟时，SX1268 可通过 DIO3 引脚为 TCXO 供电。
 /// 选择与所用 TCXO 器件额定电压匹配的档位。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug, PartialEq, Eq))]
+#[cfg_attr(feature = "no_std", derive(Clone, Copy, Debug, PartialEq, Eq, Format))]
 pub enum TcxoVoltage {
   /// 1.6 V
   Ctrl1v6 = 0x00,
@@ -92,7 +102,8 @@ pub enum TcxoVoltage {
 /// 当外部使用温补晶振（TCXO）时，此结构体指定 DIO3 输出电压和
 /// TCXO 稳定等待超时。初始化阶段驱动会先配置 TCXO 并等待其稳定后
 /// 再执行校准。
-#[derive(Clone, Copy, Debug, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug))]
+#[cfg_attr(feature = "no_std", derive(Clone, Copy, Debug, Format))]
 pub struct TcxoConfig {
   /// TCXO supply voltage.
   pub voltage: TcxoVoltage,
@@ -106,7 +117,8 @@ pub struct TcxoConfig {
 /// 可确保器件在不同温度和电压条件下保持最佳射频性能。
 ///
 /// 常量 [`ALL`](Self::ALL) (`0x7F`) 校准全部模块。
-#[derive(Clone, Copy, Debug, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug))]
+#[cfg_attr(feature = "no_std", derive(Clone, Copy, Debug, Format))]
 pub struct CalibrationParams(pub u8);
 
 impl CalibrationParams {
@@ -132,7 +144,8 @@ impl CalibrationParams {
 ///
 /// 进入 Sleep 模式后器件功耗最低。通过 `warm_start` 可保留寄存器
 /// 配置（热启动），`rtc_wakeup` 使能 RTC 定时唤醒。
-#[derive(Clone, Copy, Debug, Default, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug, Default))]
+#[cfg_attr(feature = "no_std", derive(Clone, Copy, Debug, Default, Format))]
 pub struct SleepConfig {
   /// If `true`, the device retains its configuration in sleep (warm start).
   /// Otherwise a cold start is performed on wakeup.
@@ -163,7 +176,8 @@ impl SleepConfig {
 ///
 /// - **StbyRc** — 13 MHz 内部 RC 振荡器，功耗低但频率精度较差。
 /// - **StbyXosc** — 32 MHz 外部晶振，频率更精确、唤醒更快。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug, PartialEq, Eq))]
+#[cfg_attr(feature = "no_std", derive(Clone, Copy, Debug, PartialEq, Eq, Format))]
 pub enum StandbyConfig {
   /// Standby with internal 13 MHz RC oscillator.
   StbyRc = 0x00,
@@ -175,7 +189,8 @@ pub enum StandbyConfig {
 ///
 /// 更多的检测符号提高了 CAD 灵敏度（降低漏检概率），但也增加了
 /// CAD 持续时间和功耗。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug, PartialEq, Eq))]
+#[cfg_attr(feature = "no_std", derive(Clone, Copy, Debug, PartialEq, Eq, Format))]
 pub enum CadSymbols {
   /// 1 symbol
   Cad1Symbol = 0x00,
@@ -193,10 +208,108 @@ pub enum CadSymbols {
 ///
 /// - **CadOnly** — CAD 完成后设备返回 STDBY_RC，无论是否检测到活动。
 /// - **CadRx** — 如果检测到信道活动，自动进入 RX 模式接收数据包。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format)]
+#[cfg_attr(feature = "std", derive(Clone, Copy, Debug, PartialEq, Eq))]
+#[cfg_attr(feature = "no_std", derive(Clone, Copy, Debug, PartialEq, Eq, Format))]
 pub enum CadExitMode {
   /// Return to standby after CAD regardless of result.
   CadOnly = 0x00,
   /// Enter RX mode if activity is detected.
   CadRx = 0x01,
+}
+
+#[cfg(feature = "std")]
+impl Display for RampTime {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      RampTime::Ramp10Us => write!(f, "Ramp10Us"),
+      RampTime::Ramp20Us => write!(f, "Ramp20Us"),
+      RampTime::Ramp40Us => write!(f, "Ramp40Us"),
+      RampTime::Ramp80Us => write!(f, "Ramp80Us"),
+      RampTime::Ramp200Us => write!(f, "Ramp200Us"),
+      RampTime::Ramp800Us => write!(f, "Ramp800Us"),
+      RampTime::Ramp1700Us => write!(f, "Ramp1700Us"),
+      RampTime::Ramp3400Us => write!(f, "Ramp3400Us"),
+    }
+  }
+}
+
+#[cfg(feature = "std")]
+impl Display for RegulatorMode {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      RegulatorMode::Ldo => write!(f, "Ldo"),
+      RegulatorMode::DcDcLdo => write!(f, "DcDcLdo"),
+    }
+  }
+}
+
+#[cfg(feature = "std")]
+impl Display for FallbackMode {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      FallbackMode::StbyRc => write!(f, "StbyRc"),
+      FallbackMode::StbyXosc => write!(f, "StbyXosc"),
+      FallbackMode::Fs => write!(f, "Fs"),
+    }
+  }
+}
+
+#[cfg(feature = "std")]
+impl Display for TcxoVoltage {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      TcxoVoltage::Ctrl1v6 => write!(f, "Ctrl1v6"),
+      TcxoVoltage::Ctrl1v7 => write!(f, "Ctrl1v7"),
+      TcxoVoltage::Ctrl1v8 => write!(f, "Ctrl1v8"),
+      TcxoVoltage::Ctrl2v2 => write!(f, "Ctrl2v2"),
+      TcxoVoltage::Ctrl2v4 => write!(f, "Ctrl2v4"),
+      TcxoVoltage::Ctrl2v7 => write!(f, "Ctrl2v7"),
+      TcxoVoltage::Ctrl3v0 => write!(f, "Ctrl3v0"),
+      TcxoVoltage::Ctrl3v3 => write!(f, "Ctrl3v3"),
+    }
+  }
+}
+
+#[cfg(feature = "std")]
+impl Display for SleepConfig {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(
+      f,
+      "SleepConfig {{ warm_start: {}, rtc_wakeup: {} }}",
+      self.warm_start, self.rtc_wakeup
+    )
+  }
+}
+
+#[cfg(feature = "std")]
+impl Display for StandbyConfig {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      StandbyConfig::StbyRc => write!(f, "StbyRc"),
+      StandbyConfig::StbyXosc => write!(f, "StbyXosc"),
+    }
+  }
+}
+
+#[cfg(feature = "std")]
+impl Display for CadSymbols {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      CadSymbols::Cad1Symbol => write!(f, "Cad1Symbol"),
+      CadSymbols::Cad2Symbols => write!(f, "Cad2Symbols"),
+      CadSymbols::Cad4Symbols => write!(f, "Cad4Symbols"),
+      CadSymbols::Cad8Symbols => write!(f, "Cad8Symbols"),
+      CadSymbols::Cad16Symbols => write!(f, "Cad16Symbols"),
+    }
+  }
+}
+
+#[cfg(feature = "std")]
+impl Display for CadExitMode {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      CadExitMode::CadOnly => write!(f, "CadOnly"),
+      CadExitMode::CadRx => write!(f, "CadRx"),
+    }
+  }
 }
