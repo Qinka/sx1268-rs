@@ -71,6 +71,21 @@ impl LoRaSpreadingFactor {
       LoRaSpreadingFactor::Sf12 => 12,
     }
   }
+
+  pub fn from_sf(sf: u8) -> Option<Self> {
+    match sf {
+      5 => Some(Self::Sf5),
+      6 => Some(Self::Sf6),
+      7 => Some(Self::Sf7),
+      8 => Some(Self::Sf8),
+      9 => Some(Self::Sf9),
+      10 => Some(Self::Sf10),
+      11 => Some(Self::Sf11),
+      12 => Some(Self::Sf12),
+      _ => None,
+    }
+  }
+
 }
 
 /// LoRa signal bandwidth.
@@ -121,6 +136,22 @@ impl LoRaBandwidth {
       LoRaBandwidth::Bw500 => 500,
     }
   }
+
+  pub fn from_khz(khz: u32) -> Option<Self> {
+    match khz {
+      7 => Some(Self::Bw7),
+      10 => Some(Self::Bw10),
+      15 => Some(Self::Bw15),
+      20 => Some(Self::Bw20),
+      31 => Some(Self::Bw31),
+      41 => Some(Self::Bw41),
+      62 => Some(Self::Bw62),
+      125 => Some(Self::Bw125),
+      250 => Some(Self::Bw250),
+      500 => Some(Self::Bw500),
+      _ => None,
+    }
+  }
 }
 
 /// LoRa forward error-correction coding rate.
@@ -152,6 +183,16 @@ impl LoRaCodingRate {
       LoRaCodingRate::Cr4_6 => (4, 6),
       LoRaCodingRate::Cr4_7 => (4, 7),
       LoRaCodingRate::Cr4_8 => (4, 8),
+    }
+  }
+
+  pub fn from_cr(cr_a: u8, cr_b: u8) -> Option<Self> {
+    match (cr_a, cr_b) {
+      (4, 5) => Some(Self::Cr4_5),
+      (4, 6) => Some(Self::Cr4_6),
+      (4, 7) => Some(Self::Cr4_7),
+      (4, 8) => Some(Self::Cr4_8),
+      _ => None,
     }
   }
 }
